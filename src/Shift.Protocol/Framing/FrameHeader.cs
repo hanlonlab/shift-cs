@@ -22,5 +22,5 @@ public enum MessageType : ushort
     TradeExecuted = 7, // Match
 
     // Archiver & Control
-    CommitThrough = 8, // Archiver has durably synced through this sequence
+    CommitThrough = 8 // Archiver has durably synced through this sequence
 }
