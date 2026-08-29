@@ -12,3 +12,28 @@ This repository contains a single-host replay trading platform built around one 
 - `docs/` records architectural invariants, protocols, and recovery behavior.
 
 Business state belongs in the deterministic engine, ordering belongs in the sequencer, durable records belong in the archiver, and query state belongs in PostgreSQL projections.
+
+## Code style
+
+Repository-wide formatting, naming, and analyzer rules live in `.editorconfig` and `Directory.Build.props`. Compiler and analyzer warnings fail the build, nullable reference types are enabled, and integral arithmetic is checked by default. Use the smallest possible `unchecked` block only when wraparound is intentional, such as in a checksum.
+
+Authoritative exchange code follows four additional rules:
+
+- Represent money as integer price ticks and quantities, never `float` or `double`.
+- Give serialized enum members explicit numeric values, reserve zero, and never renumber or reuse a value.
+- Use invariant culture for wire, journal, and replay values; compare identifiers and protocol tokens ordinally.
+- Derive engine time and identifiers from sequenced input. Do not let wall-clock time, randomness, external I/O, hash codes, or unordered collection iteration affect state transitions.
+
+Run the formatter before submitting a change:
+
+```shell
+dotnet format Shift.slnx
+```
+
+Verify formatting and compilation without changing files:
+
+```shell
+dotnet restore Shift.slnx
+dotnet format Shift.slnx --verify-no-changes --no-restore
+dotnet build Shift.slnx --no-restore
+```

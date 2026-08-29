@@ -1,0 +1,48 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="global.json" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <File Path="benchmarks/README.md" />
+    <Project Path="benchmarks/Shift.Benchmarks/Shift.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/database/">
+    <File Path="database/README.md" />
+  </Folder>
+  <Folder Name="/database/migrations/">
+    <File Path="database/migrations/README.md" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="docs/README.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <File Path="src/README.md" />
+    <Project Path="src/Shift.Archiver/Shift.Archiver.csproj" />
+    <Project Path="src/Shift.Engine/Shift.Engine.csproj" />
+    <Project Path="src/Shift.Ipc/Shift.Ipc.csproj" />
+    <Project Path="src/Shift.MarketDataGateway/Shift.MarketDataGateway.csproj" />
+    <Project Path="src/Shift.OrderGateway/Shift.OrderGateway.csproj" />
+    <Project Path="src/Shift.Protocol/Shift.Protocol.csproj" />
+    <Project Path="src/Shift.QueryApi/Shift.QueryApi.csproj" />
+    <Project Path="src/Shift.ReferenceFeed/Shift.ReferenceFeed.csproj" />
+    <Project Path="src/Shift.Sequencer/Shift.Sequencer.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <File Path="test/README.md" />
+    <Project Path="test/Shift.Archiver.Tests/Shift.Archiver.Tests.csproj" />
+    <Project Path="test/Shift.Engine.Tests/Shift.Engine.Tests.csproj" />
+    <Project Path="test/Shift.IntegrationTests/Shift.IntegrationTests.csproj" />
+    <Project Path="test/Shift.Protocol.Tests/Shift.Protocol.Tests.csproj" />
+    <Project Path="test/Shift.Sequencer.Tests/Shift.Sequencer.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <File Path="tools/README.md" />
+    <Project Path="tools/Shift.LoadGenerator/Shift.LoadGenerator.csproj" />
+    <Project Path="tools/Shift.SessionLogTool/Shift.SessionLogTool.csproj" />
+  </Folder>
+</Solution>
