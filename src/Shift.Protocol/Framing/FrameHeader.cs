@@ -1,7 +1,7 @@
 namespace Shift.Protocol.Framing;
 
 public readonly record struct FrameHeader(
-    uint TotalLength,
+    uint FrameLength,
     byte Version,
     MessageType MessageType,
     Guid MessageId,

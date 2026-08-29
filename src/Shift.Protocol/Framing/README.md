@@ -4,17 +4,21 @@ This directory owns the binary envelope around internal commands, events, and co
 
 ## Version 1 layout
 
-All multibyte values use big-endian byte order. `TotalLength` includes the header, payload, and checksum.
+All multibyte values use big-endian byte order. `FrameLength` includes the header, payload, and checksum.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 4 | Total length |
+| 0 | 4 | Frame length |
 | 4 | 1 | Version |
 | 5 | 2 | Message type |
 | 7 | 16 | Message ID |
 | 23 | 8 | Global sequence |
 | 31 | variable | Payload |
-| `TotalLength - 4` | 4 | CRC-32C of every preceding frame byte |
+| `FrameLength - 4` | 4 | CRC-32C of every preceding frame byte |
+
+Payload length is `FrameLength - 35`.
+
+Each encoded buffer contains exactly one frame. Trailing bytes are invalid.
 
 Message type zero is invalid; unknown nonzero values remain decodable for forward compatibility.
 
