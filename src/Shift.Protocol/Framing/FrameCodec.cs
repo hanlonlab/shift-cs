@@ -7,8 +7,15 @@ namespace Shift.Protocol.Framing;
 public static class FrameCodec
 {
     public const byte CurrentVersion = 1;
-    public const int HeaderSize = 31;
-    public const int ChecksumSize = 4;
+
+    private const int VersionOffset = sizeof(uint);
+    private const int MessageTypeOffset = VersionOffset + sizeof(byte);
+    private const int MessageIdOffset = MessageTypeOffset + sizeof(ushort);
+    private const int MessageIdSize = 16;
+    private const int SequenceIdOffset = MessageIdOffset + MessageIdSize;
+
+    public const int HeaderSize = SequenceIdOffset + sizeof(long);
+    public const int ChecksumSize = sizeof(uint);
     public const int MinimumFrameSize = HeaderSize + ChecksumSize;
 
     public static int Encode(
@@ -36,11 +43,12 @@ public static class FrameCodec
 
         Span<byte> frame = destination[..totalLength];
         payload.CopyTo(frame.Slice(HeaderSize, payload.Length));
+
         BinaryPrimitives.WriteUInt32BigEndian(frame, (uint)totalLength);
-        frame[4] = CurrentVersion;
-        BinaryPrimitives.WriteUInt16BigEndian(frame[5..], (ushort)messageType);
-        messageId.TryWriteBytes(frame.Slice(7, 16), bigEndian: true, out _);
-        BinaryPrimitives.WriteInt64BigEndian(frame[23..], sequenceId);
+        frame[VersionOffset] = CurrentVersion;
+        BinaryPrimitives.WriteUInt16BigEndian(frame[MessageTypeOffset..], (ushort)messageType);
+        messageId.TryWriteBytes(frame.Slice(MessageIdOffset, MessageIdSize), bigEndian: true, out _);
+        BinaryPrimitives.WriteInt64BigEndian(frame[SequenceIdOffset..], sequenceId);
 
         uint checksum = ComputeCrc32C(frame[..^ChecksumSize]);
         BinaryPrimitives.WriteUInt32BigEndian(frame[^ChecksumSize..], checksum);
@@ -57,36 +65,10 @@ public static class FrameCodec
         payload = default;
         bytesConsumed = 0;
 
-        if (source.Length < sizeof(uint))
+        OperationStatus prefixStatus = TryReadFramePrefix(source, out uint totalLength, out MessageType messageType);
+        if (prefixStatus != OperationStatus.Done)
         {
-            return OperationStatus.NeedMoreData;
-        }
-
-        uint totalLength = BinaryPrimitives.ReadUInt32BigEndian(source);
-        if (totalLength is < MinimumFrameSize or > int.MaxValue)
-        {
-            return OperationStatus.InvalidData;
-        }
-
-        if (source.Length < 5)
-        {
-            return OperationStatus.NeedMoreData;
-        }
-
-        if (source[4] != CurrentVersion)
-        {
-            return OperationStatus.InvalidData;
-        }
-
-        if (source.Length < 7)
-        {
-            return OperationStatus.NeedMoreData;
-        }
-
-        ushort messageType = BinaryPrimitives.ReadUInt16BigEndian(source[5..]);
-        if (messageType == 0)
-        {
-            return OperationStatus.InvalidData;
+            return prefixStatus;
         }
 
         if (source.Length < (int)totalLength)
@@ -95,20 +77,65 @@ public static class FrameCodec
         }
 
         ReadOnlySpan<byte> frame = source[..(int)totalLength];
-        uint expectedChecksum = BinaryPrimitives.ReadUInt32BigEndian(frame[^ChecksumSize..]);
-        if (expectedChecksum != ComputeCrc32C(frame[..^ChecksumSize]))
+        uint encodedChecksum = BinaryPrimitives.ReadUInt32BigEndian(frame[^ChecksumSize..]);
+        uint computedChecksum = ComputeCrc32C(frame[..^ChecksumSize]);
+        if (encodedChecksum != computedChecksum)
         {
             return OperationStatus.InvalidData;
         }
 
         header = new FrameHeader(
             totalLength,
-            frame[4],
-            (MessageType)messageType,
-            new Guid(frame.Slice(7, 16), bigEndian: true),
-            BinaryPrimitives.ReadInt64BigEndian(frame[23..]));
+            CurrentVersion,
+            messageType,
+            new Guid(frame.Slice(MessageIdOffset, MessageIdSize), bigEndian: true),
+            BinaryPrimitives.ReadInt64BigEndian(frame[SequenceIdOffset..]));
         payload = frame.Slice(HeaderSize, frame.Length - MinimumFrameSize);
         bytesConsumed = frame.Length;
+        return OperationStatus.Done;
+    }
+
+    private static OperationStatus TryReadFramePrefix(
+        ReadOnlySpan<byte> source,
+        out uint totalLength,
+        out MessageType messageType)
+    {
+        totalLength = 0;
+        messageType = default;
+
+        if (source.Length < VersionOffset)
+        {
+            return OperationStatus.NeedMoreData;
+        }
+
+        totalLength = BinaryPrimitives.ReadUInt32BigEndian(source);
+        if (totalLength is < MinimumFrameSize or > int.MaxValue)
+        {
+            return OperationStatus.InvalidData;
+        }
+
+        if (source.Length < MessageTypeOffset)
+        {
+            return OperationStatus.NeedMoreData;
+        }
+
+        if (source[VersionOffset] != CurrentVersion)
+        {
+            return OperationStatus.InvalidData;
+        }
+
+        if (source.Length < MessageIdOffset)
+        {
+            return OperationStatus.NeedMoreData;
+        }
+
+        ushort encodedMessageType = BinaryPrimitives.ReadUInt16BigEndian(source[MessageTypeOffset..]);
+        if (encodedMessageType == 0)
+        {
+            return OperationStatus.InvalidData;
+        }
+
+        messageType = (MessageType)encodedMessageType;
         return OperationStatus.Done;
     }
 
