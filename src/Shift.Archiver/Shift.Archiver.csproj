@@ -4,4 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Shift.Protocol/Shift.Protocol.csproj" />
+  </ItemGroup>
 </Project>

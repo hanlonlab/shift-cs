@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Numerics;
 
 namespace Shift.Protocol.Framing;
 
@@ -75,7 +74,7 @@ public static class FrameCodec
             sequenceId);
 
         int checksumOffset = frameLength - ChecksumFieldSize;
-        uint checksum = ComputeCrc32C(frame[..checksumOffset]);
+        uint checksum = Crc32C.Compute(frame[..checksumOffset]);
         BinaryPrimitives.WriteUInt32BigEndian(
             frame.Slice(checksumOffset, ChecksumFieldSize),
             checksum);
@@ -131,7 +130,7 @@ public static class FrameCodec
         int checksumOffset = frameLength - ChecksumFieldSize;
         uint encodedChecksum = BinaryPrimitives.ReadUInt32BigEndian(
             source.Slice(checksumOffset, ChecksumFieldSize));
-        uint computedChecksum = ComputeCrc32C(source[..checksumOffset]);
+        uint computedChecksum = Crc32C.Compute(source[..checksumOffset]);
         if (encodedChecksum != computedChecksum)
         {
             return OperationStatus.InvalidData;
@@ -148,14 +147,4 @@ public static class FrameCodec
         return OperationStatus.Done;
     }
 
-    private static uint ComputeCrc32C(ReadOnlySpan<byte> source)
-    {
-        uint checksum = uint.MaxValue;
-        foreach (byte value in source)
-        {
-            checksum = BitOperations.Crc32C(checksum, value);
-        }
-
-        return ~checksum;
-    }
 }
