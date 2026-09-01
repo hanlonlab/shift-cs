@@ -5,6 +5,9 @@ using Shift.Protocol.Framing;
 
 namespace Shift.Archiver;
 
+/// <summary>
+/// Archives frame history in an inefficient manner, current rtt ~5ms from request -> flush
+/// </summary>
 public sealed class SessionLog : IDisposable
 {
     private const uint CommitMarkerSentinel = 0;

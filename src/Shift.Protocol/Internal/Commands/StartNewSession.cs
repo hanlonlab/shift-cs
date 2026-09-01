@@ -1,6 +1,6 @@
 namespace Shift.Protocol.Internal.Commands;
 
-public readonly record struct StartNewSession(Guid SimulationId);
+public readonly record struct StartNewSession(Guid SessionId);
 
 public static class StartNewSessionCodec
 {
@@ -13,7 +13,7 @@ public static class StartNewSessionCodec
             throw new ArgumentException("Destination is too small for the encoded command.", nameof(destination));
         }
 
-        command.SimulationId.TryWriteBytes(destination, bigEndian: true, out _);
+        command.SessionId.TryWriteBytes(destination, bigEndian: true, out _);
         return EncodedLength;
     }
 
