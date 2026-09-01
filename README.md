@@ -1,6 +1,6 @@
 # SHIFT C#
 
-This repository contains a single-host replay trading platform built around one global sequence and a durably journaled message stream. Independent processes communicate internally through Unix-domain sockets and loopback multicast UDP; only client-facing gateways use TCP or external UDP multicast.
+This repository contains a single-host replay trading platform built around one authoritative sequence per session and a durably journaled message stream. Independent processes communicate internally through Unix-domain sockets and loopback multicast UDP; only client-facing gateways use TCP or external UDP multicast.
 
 ## Directory map
 

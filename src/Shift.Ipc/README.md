@@ -1,6 +1,6 @@
 # Shift.Ipc
 
-Owns the single-host transports used between processes: shared AF_UNIX datagram ingress, committed-frame delivery over loopback multicast, and length-prefixed catch-up over the replay UDS stream.
+Owns the single-host transports used between processes: shared AF_UNIX datagram ingress, the Sequencer-to-Archiver AF_UNIX stream, and committed-frame delivery over loopback multicast.
 
 ## Proposal ingress
 
@@ -12,10 +12,18 @@ The Sequencer owns the receiver path. Its parent directory must already exist, a
 
 A completed send means the kernel accepted the datagram. Only the frame later published on the committed stream confirms that the exchange accepted the proposal.
 
+## Durability stream
+
+The Archiver listens on `/run/shift/archiver.sock`. Each batch is `[count:uint32 big-endian][canonical frame 1]...[canonical frame N]`; each frame already begins with its own big-endian length. The total canonical frame bytes are limited to 1 MiB. The Archiver replies with one canonical `CommitThrough` frame.
+
+## Committed multicast
+
+The Sequencer sends one canonical frame per datagram to `239.255.0.1:55000` over IPv4 loopback with TTL 1. It sends committed batch frames in order followed by their `CommitThrough` watermark. UDP loss recovery and replay are outside the current live-only implementation.
+
 ## Belongs here
 
 - AF_UNIX endpoint paths and datagram send/receive code.
-- Internal multicast and replay-stream framing.
+- Sequencer-to-Archiver stream transfer and internal multicast.
 
 ## Does not belong here
 

@@ -12,7 +12,7 @@ All multibyte values use big-endian byte order. `FrameLength` includes the heade
 | 4 | 1 | Version |
 | 5 | 2 | Message type |
 | 7 | 16 | Message ID |
-| 23 | 8 | Global sequence |
+| 23 | 8 | Session sequence |
 | 31 | variable | Payload |
 | `FrameLength - 4` | 4 | CRC-32C of every preceding frame byte |
 

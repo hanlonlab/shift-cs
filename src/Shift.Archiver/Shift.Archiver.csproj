@@ -3,9 +3,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Shift.Ipc/Shift.Ipc.csproj" />
     <ProjectReference Include="../Shift.Protocol/Shift.Protocol.csproj" />
   </ItemGroup>
 </Project>

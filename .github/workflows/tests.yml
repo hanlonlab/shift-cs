@@ -19,4 +19,4 @@ jobs:
           dotnet restore Shift.slnx
           dotnet format Shift.slnx --verify-no-changes --no-restore
           dotnet build Shift.slnx --configuration Release --no-restore -warnaserror
-          dotnet test --solution Shift.slnx --configuration Release --no-build --no-restore --minimum-expected-tests 13
+          dotnet test --solution Shift.slnx --configuration Release --no-build --no-restore --minimum-expected-tests 52

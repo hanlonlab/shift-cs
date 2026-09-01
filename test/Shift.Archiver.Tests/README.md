@@ -1,10 +1,10 @@
 # Shift.Archiver.Tests
 
-This project verifies append and flush boundaries, torn-tail recovery, gapfill bytes, and PostgreSQL projector checkpoint behavior.
+This project verifies append and flush boundaries, batch validation, durable acknowledgment, and per-session log rotation.
 
 ## Belongs here
 
-- Session-log corruption, crash-boundary, and projector idempotency tests.
+- Session-log and Archiver batch/lifecycle tests.
 
 ## Does not belong here
 

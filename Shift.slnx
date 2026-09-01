@@ -37,6 +37,7 @@
     <Project Path="test/Shift.Archiver.Tests/Shift.Archiver.Tests.csproj" />
     <Project Path="test/Shift.Engine.Tests/Shift.Engine.Tests.csproj" />
     <Project Path="test/Shift.IntegrationTests/Shift.IntegrationTests.csproj" />
+    <Project Path="test/Shift.Ipc.Tests/Shift.Ipc.Tests.csproj" />
     <Project Path="test/Shift.Protocol.Tests/Shift.Protocol.Tests.csproj" />
     <Project Path="test/Shift.Sequencer.Tests/Shift.Sequencer.Tests.csproj" />
   </Folder>

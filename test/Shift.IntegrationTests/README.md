@@ -1,6 +1,6 @@
 # Shift.IntegrationTests
 
-This project verifies end-to-end AF_UNIX and multicast IPC, committed-frame delivery, gapfill, process restart, and recovery behavior.
+This project verifies end-to-end AF_UNIX and multicast IPC and committed-frame delivery.
 
 ## Belongs here
 
