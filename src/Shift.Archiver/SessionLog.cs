@@ -8,12 +8,8 @@ namespace Shift.Archiver;
 public sealed class SessionLog : IDisposable
 {
     private const uint CommitMarkerSentinel = 0;
-
-    private const int SentinelOffset = 0;
-    private const int CommittedThroughOffset = SentinelOffset + sizeof(uint);
-    private const int CommittedPrefixLengthOffset = CommittedThroughOffset + sizeof(long);
-    private const int ChecksumOffset = CommittedPrefixLengthOffset + sizeof(long);
-    private const int CommitMarkerSize = ChecksumOffset + sizeof(uint);
+    private const int CommitMarkerChecksumSize = sizeof(uint);
+    private const int CommitMarkerSize = sizeof(uint) + sizeof(long) + CommitMarkerChecksumSize;
 
     private readonly FileStream _stream;
     private long _committedThrough;
@@ -73,18 +69,15 @@ public sealed class SessionLog : IDisposable
             throw new InvalidOperationException("There are no pending frames to commit.");
         }
 
-        long committedPrefixLength = _stream.Position;
         Span<byte> marker = stackalloc byte[CommitMarkerSize];
 
-        BinaryPrimitives.WriteUInt32BigEndian(marker[SentinelOffset..], CommitMarkerSentinel);
-        BinaryPrimitives.WriteInt64BigEndian(marker[CommittedThroughOffset..], _lastSequence);
-        BinaryPrimitives.WriteInt64BigEndian(
-            marker[CommittedPrefixLengthOffset..],
-            committedPrefixLength);
+        BinaryPrimitives.WriteUInt32BigEndian(marker, CommitMarkerSentinel);
+        BinaryPrimitives.WriteInt64BigEndian(marker[sizeof(uint)..], _lastSequence);
 
-        uint checksum = Crc32C.Compute(marker[..ChecksumOffset]);
+        Span<byte> markerWithoutChecksum = marker[..^CommitMarkerChecksumSize];
+        uint checksum = Crc32C.Compute(markerWithoutChecksum);
         BinaryPrimitives.WriteUInt32BigEndian(
-            marker[ChecksumOffset..],
+            marker[^CommitMarkerChecksumSize..],
             checksum);
 
         try

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Shift.Protocol;
 using Shift.Protocol.Framing;
 using Xunit;
 
@@ -8,12 +9,11 @@ public sealed class SessionLogTests : IDisposable
 {
     private static readonly Guid _messageId = new("00112233-4455-6677-8899-aabbccddeeff");
     private static readonly byte[] _payload = [0xde, 0xad, 0xbe, 0xef];
-    private static readonly byte[] _commitThroughOneAtOffsetThirtyNine =
+    private static readonly byte[] _flushBoundaryThroughOne =
     [
         0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x27,
-        0xbc, 0x8c, 0x6a, 0x43,
+        0xd9, 0x0b, 0x36, 0x5e,
     ];
 
     private readonly string _directory;
@@ -34,9 +34,9 @@ public sealed class SessionLogTests : IDisposable
         log.Append(frame);
         long committedThrough = log.Commit();
 
-        byte[] expected = new byte[frame.Length + _commitThroughOneAtOffsetThirtyNine.Length];
+        byte[] expected = new byte[frame.Length + _flushBoundaryThroughOne.Length];
         frame.CopyTo(expected, 0);
-        _commitThroughOneAtOffsetThirtyNine.CopyTo(expected, frame.Length);
+        _flushBoundaryThroughOne.CopyTo(expected, frame.Length);
         Assert.Equal(1, committedThrough);
         Assert.Equal(expected, File.ReadAllBytes(path));
     }
@@ -54,7 +54,7 @@ public sealed class SessionLogTests : IDisposable
     }
 
     [Fact]
-    public void SequenceContinuesAcrossCommitMarkers()
+    public void SequenceContinuesAcrossFlushBoundaries()
     {
         string path = Path.Combine(_directory, "session.shiftlog");
         byte[] firstFrame = EncodeFrame(1);
@@ -68,16 +68,17 @@ public sealed class SessionLogTests : IDisposable
 
         byte[] bytes = File.ReadAllBytes(path);
         int secondMarkerOffset = firstFrame.Length
-            + _commitThroughOneAtOffsetThirtyNine.Length
+            + _flushBoundaryThroughOne.Length
             + secondFrame.Length;
         Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(secondMarkerOffset)));
         Assert.Equal(
             2,
             BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(secondMarkerOffset + sizeof(uint))));
+
+        ReadOnlySpan<byte> marker = bytes.AsSpan(secondMarkerOffset, _flushBoundaryThroughOne.Length);
         Assert.Equal(
-            secondMarkerOffset,
-            BinaryPrimitives.ReadInt64BigEndian(
-                bytes.AsSpan(secondMarkerOffset + sizeof(uint) + sizeof(long))));
+            Crc32C.Compute(marker[..^sizeof(uint)]),
+            BinaryPrimitives.ReadUInt32BigEndian(marker[^sizeof(uint)..]));
     }
 
     [Fact]
