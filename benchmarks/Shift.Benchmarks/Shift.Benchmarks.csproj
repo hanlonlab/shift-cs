@@ -3,5 +3,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Shift.Archiver/Shift.Archiver.csproj" />
+    <ProjectReference Include="../../src/Shift.Ipc/Shift.Ipc.csproj" />
+    <ProjectReference Include="../../src/Shift.Protocol/Shift.Protocol.csproj" />
+    <ProjectReference Include="../../src/Shift.Sequencer/Shift.Sequencer.csproj" />
+  </ItemGroup>
 </Project>
