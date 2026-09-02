@@ -8,23 +8,27 @@ namespace Shift.Protocol.Framing;
 /// </summary>
 /// <remarks>
 /// <code>
-/// [frame length:4][version:1][message type:2][message ID:16][sequence ID:8][payload:N][CRC-32C:4]
+/// [frame length:4][version:1][message type:2][producer ID:2][producer sequence:8][sequence ID:8][payload:N][CRC-32C:4]
 /// </code>
 /// Multibyte values are big-endian. Frame length includes the entire frame, and CRC-32C covers
 /// every preceding byte. Payload length is frame length minus <see cref="MinimumFrameSize"/>.
+/// Producer ID 0 is reserved for Archiver control frames.
 /// </remarks>
 public static class FrameCodec
 {
     public const byte CurrentVersion = 1;
+    public const ushort ControlProducerId = 0;
 
     private const int FrameLengthFieldSize = sizeof(uint);
     private const int VersionOffset = FrameLengthFieldSize;
     private const int VersionFieldSize = sizeof(byte);
     private const int MessageTypeOffset = VersionOffset + VersionFieldSize;
     private const int MessageTypeFieldSize = sizeof(ushort);
-    private const int MessageIdOffset = MessageTypeOffset + MessageTypeFieldSize;
-    private const int MessageIdFieldSize = 16;
-    private const int SequenceIdOffset = MessageIdOffset + MessageIdFieldSize;
+    private const int ProducerIdOffset = MessageTypeOffset + MessageTypeFieldSize;
+    private const int ProducerIdFieldSize = sizeof(ushort);
+    private const int ProducerSequenceOffset = ProducerIdOffset + ProducerIdFieldSize;
+    private const int ProducerSequenceFieldSize = sizeof(ulong);
+    private const int SequenceIdOffset = ProducerSequenceOffset + ProducerSequenceFieldSize;
     private const int SequenceIdFieldSize = sizeof(long);
 
     public const int HeaderSize = SequenceIdOffset + SequenceIdFieldSize;
@@ -37,7 +41,8 @@ public static class FrameCodec
     /// <remarks>Payload and destination may overlap.</remarks>
     public static int Encode(
         MessageType messageType,
-        Guid messageId,
+        ushort producerId,
+        ulong producerSequence,
         long sequenceId,
         ReadOnlySpan<byte> payload,
         Span<byte> destination)
@@ -68,7 +73,12 @@ public static class FrameCodec
         BinaryPrimitives.WriteUInt16BigEndian(
             frame.Slice(MessageTypeOffset, MessageTypeFieldSize),
             (ushort)messageType);
-        messageId.TryWriteBytes(frame.Slice(MessageIdOffset, MessageIdFieldSize), bigEndian: true, out _);
+        BinaryPrimitives.WriteUInt16BigEndian(
+            frame.Slice(ProducerIdOffset, ProducerIdFieldSize),
+            producerId);
+        BinaryPrimitives.WriteUInt64BigEndian(
+            frame.Slice(ProducerSequenceOffset, ProducerSequenceFieldSize),
+            producerSequence);
         BinaryPrimitives.WriteInt64BigEndian(
             frame.Slice(SequenceIdOffset, SequenceIdFieldSize),
             sequenceId);
@@ -140,11 +150,12 @@ public static class FrameCodec
             declaredFrameLength,
             CurrentVersion,
             (MessageType)encodedMessageType,
-            new Guid(source.Slice(MessageIdOffset, MessageIdFieldSize), bigEndian: true),
+            BinaryPrimitives.ReadUInt16BigEndian(source.Slice(ProducerIdOffset, ProducerIdFieldSize)),
+            BinaryPrimitives.ReadUInt64BigEndian(
+                source.Slice(ProducerSequenceOffset, ProducerSequenceFieldSize)),
             BinaryPrimitives.ReadInt64BigEndian(source.Slice(SequenceIdOffset, SequenceIdFieldSize)));
         int payloadLength = frameLength - MinimumFrameSize;
         payload = source.Slice(HeaderSize, payloadLength);
         return OperationStatus.Done;
     }
-
 }

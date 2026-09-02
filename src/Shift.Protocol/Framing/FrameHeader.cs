@@ -4,7 +4,8 @@ public readonly record struct FrameHeader(
     uint FrameLength,
     byte Version,
     MessageType MessageType,
-    Guid MessageId,
+    ushort ProducerId,
+    ulong ProducerSequence,
     long SequenceId
 );
 
@@ -22,5 +23,6 @@ public enum MessageType : ushort
     TradeExecuted = 7, // Match
 
     // Archiver & Control
-    CommitThrough = 8 // Archiver has durably synced through this sequence
+    CommitThrough = 8, // Archiver has durably synced through this sequence
+    RecoveredSession = 9 // Archiver handshake: restored session, high-water, and producer cursors
 }
