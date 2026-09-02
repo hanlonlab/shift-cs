@@ -4,6 +4,49 @@ using Shift.Protocol.Internal.Commands;
 
 namespace Shift.Sequencer;
 
+public readonly struct VerifiedSubmission
+{
+    private VerifiedSubmission(ReadOnlyMemory<byte> frame, FrameHeader header)
+    {
+        Frame = frame;
+        Header = header;
+    }
+
+    internal ReadOnlyMemory<byte> Frame { get; }
+
+    internal FrameHeader Header { get; }
+
+    internal ReadOnlySpan<byte> Payload => Frame.Span.Slice(
+        FrameCodec.HeaderSize,
+        Frame.Length - FrameCodec.MinimumFrameSize);
+
+    public static VerifiedSubmission Verify(ReadOnlyMemory<byte> frame)
+    {
+        OperationStatus status = FrameCodec.TryDecode(frame.Span, out FrameHeader header, out _);
+        if (status != OperationStatus.Done)
+        {
+            throw new InvalidDataException("Submission must contain exactly one valid encoded frame.");
+        }
+
+        if (header.SequenceId != 0)
+        {
+            throw new InvalidDataException("Submission sequence must be zero.");
+        }
+
+        if (header.MessageId == Guid.Empty)
+        {
+            throw new InvalidDataException("Submission message ID cannot be empty.");
+        }
+
+        if (header.MessageType == MessageType.CommitThrough)
+        {
+            throw new InvalidDataException("CommitThrough is not a submission.");
+        }
+
+        return new VerifiedSubmission(frame, header);
+    }
+}
+
 public enum SubmissionStatus
 {
     Accepted,
@@ -24,41 +67,24 @@ public sealed class SequencerState
 
     private readonly Dictionary<Guid, Message> _messages = [];
     private readonly Queue<Message> _pending = [];
-    private long _lastAcceptedSequence;
     private int _pendingBytes;
     private bool _ending;
     private bool _faulted;
     private bool _sessionActive;
 
-    public long LastAcceptedSequence => _lastAcceptedSequence;
+    public long LastAcceptedSequence { get; private set; }
 
-    public SubmissionResult Submit(ReadOnlySpan<byte> proposal)
+    public SubmissionResult Submit(VerifiedSubmission submission)
     {
         ThrowIfFaulted();
 
-        OperationStatus status = FrameCodec.TryDecode(
-            proposal,
-            out FrameHeader header,
-            out ReadOnlySpan<byte> payload);
-        if (status != OperationStatus.Done)
+        if (submission.Frame.IsEmpty)
         {
-            throw new InvalidDataException("Proposal must contain exactly one valid encoded frame.");
+            throw new ArgumentException("Submission must be verified.", nameof(submission));
         }
 
-        if (header.SequenceId != 0)
-        {
-            throw new InvalidDataException("Proposal sequence must be zero.");
-        }
-
-        if (header.MessageId == Guid.Empty)
-        {
-            throw new InvalidDataException("Proposal message ID cannot be empty.");
-        }
-
-        if (header.MessageType == MessageType.CommitThrough)
-        {
-            throw new InvalidDataException("CommitThrough is not a proposal.");
-        }
+        FrameHeader header = submission.Header;
+        ReadOnlySpan<byte> payload = submission.Payload;
 
         if (_messages.TryGetValue(header.MessageId, out Message? existing))
         {
@@ -119,7 +145,7 @@ public sealed class SequencerState
             }
         }
 
-        if (_pendingBytes > MaximumPendingBytes - proposal.Length)
+        if (_pendingBytes > MaximumPendingBytes - submission.Frame.Length)
         {
             return new SubmissionResult(
                 SubmissionStatus.BatchFull,
@@ -127,8 +153,8 @@ public sealed class SequencerState
                 ForceCommit: false);
         }
 
-        long sequenceId = startsSession ? 1 : checked(_lastAcceptedSequence + 1);
-        byte[] frame = new byte[proposal.Length];
+        long sequenceId = startsSession ? 1 : checked(LastAcceptedSequence + 1);
+        byte[] frame = new byte[submission.Frame.Length];
         FrameCodec.Encode(header.MessageType, header.MessageId, sequenceId, payload, frame);
 
         if (startsSession)
@@ -140,7 +166,7 @@ public sealed class SequencerState
         Message message = new(frame);
         _messages.Add(header.MessageId, message);
         _pending.Enqueue(message);
-        _lastAcceptedSequence = sequenceId;
+        LastAcceptedSequence = sequenceId;
         _pendingBytes += frame.Length;
 
         if (endsSession)
@@ -148,14 +174,17 @@ public sealed class SequencerState
             _ending = true;
         }
 
-        return new SubmissionResult(SubmissionStatus.Accepted, frame, ForceCommit: endsSession);
+        return new SubmissionResult(
+            SubmissionStatus.Accepted,
+            frame,
+            ForceCommit: endsSession || _pendingBytes == MaximumPendingBytes);
     }
 
     public void CommitThrough(long sequenceId)
     {
         ThrowIfFaulted();
 
-        if (_pending.Count == 0 || sequenceId != _lastAcceptedSequence)
+        if (_pending.Count == 0 || sequenceId != LastAcceptedSequence)
         {
             _faulted = true;
             throw new InvalidDataException("CommitThrough must match the current pending high-water sequence.");

@@ -22,7 +22,7 @@ public sealed class SequencerLivePathTests
 
         string directory = Path.Combine("/tmp", $"shift-{Guid.NewGuid():N}");
         string archiveRoot = Path.Combine(directory, "archive");
-        string proposalPath = Path.Combine(directory, "in.sock");
+        string submissionPath = Path.Combine(directory, "in.sock");
         string archiverPath = Path.Combine(directory, "archive.sock");
         var group = IPAddress.Parse("239.255.43.1");
         int port = GetUnusedPort();
@@ -33,23 +33,26 @@ public sealed class SequencerLivePathTests
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
             using var listener = UnixStreamSocket.Listen(archiverPath);
             using UdpMulticastReceiver committed = new(group, port, IPAddress.Loopback);
+            using UnixDatagramReceiver submissionReceiver = new(submissionPath);
+            using UnixStreamSocket archiverConnection = await UnixStreamSocket.ConnectAsync(
+                archiverPath,
+                timeout.Token);
+            using UdpMulticastSender multicast = new(group, port, IPAddress.Loopback);
 
             SequencerServer sequencer = new(
-                proposalPath,
-                archiverPath,
-                group,
-                port,
-                IPAddress.Loopback);
+                submissionReceiver,
+                archiverConnection,
+                multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
             using UnixStreamSocket stream = await listener.AcceptAsync(timeout.Token);
             using ArchiverServer archiver = new(archiveRoot);
             Task archiverTask = archiver.RunAsync(stream, timeout.Token);
-            using UnixDatagramSender proposals = new(proposalPath);
+            using UnixDatagramSender submissions = new(submissionPath);
 
             try
             {
                 Guid firstSessionId = new("00112233-4455-6677-8899-aabbccddeeff");
-                await proposals.SendAsync(
+                await submissions.SendAsync(
                     EncodeStart(firstSessionId, new Guid("10213243-5465-7687-98a9-bacbdcedfe0f")),
                     timeout.Token);
 
@@ -59,14 +62,14 @@ public sealed class SequencerLivePathTests
                 Assert.Equal(1, firstStart.SequenceId);
                 AssertCommit(firstStartCommit, 1);
 
-                await proposals.SendAsync(
-                    EncodeProposal(
+                await submissions.SendAsync(
+                    EncodeSubmission(
                         MessageType.PlaceOrder,
                         new Guid("20314253-6475-8697-a8b9-cadbecfd0e1f"),
                         [0x01]),
                     timeout.Token);
-                await proposals.SendAsync(
-                    EncodeProposal(
+                await submissions.SendAsync(
+                    EncodeSubmission(
                         MessageType.EndCurrentSession,
                         new Guid("30415263-7485-96a7-b8c9-daebfc0d1e2f"),
                         []),
@@ -82,7 +85,7 @@ public sealed class SequencerLivePathTests
                 AssertCommit(firstEndCommit, 3);
 
                 Guid secondSessionId = new("40516273-8495-a6b7-c8d9-eafb0c1d2e3f");
-                await proposals.SendAsync(
+                await submissions.SendAsync(
                     EncodeStart(secondSessionId, new Guid("50617283-94a5-b6c7-d8e9-fa0b1c2d3e4f")),
                     timeout.Token);
 
@@ -114,7 +117,7 @@ public sealed class SequencerLivePathTests
             "AF_UNIX integration test requires macOS or Linux.");
 
         string directory = Path.Combine("/tmp", $"shift-{Guid.NewGuid():N}");
-        string proposalPath = Path.Combine(directory, "in.sock");
+        string submissionPath = Path.Combine(directory, "in.sock");
         string archiverPath = Path.Combine(directory, "archive.sock");
         var group = IPAddress.Parse("239.255.43.2");
         int port = GetUnusedPort();
@@ -125,19 +128,22 @@ public sealed class SequencerLivePathTests
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
             using var listener = UnixStreamSocket.Listen(archiverPath);
             using UdpMulticastReceiver committed = new(group, port, IPAddress.Loopback);
-            SequencerServer sequencer = new(
-                proposalPath,
+            using UnixDatagramReceiver submissionReceiver = new(submissionPath);
+            using UnixStreamSocket archiverConnection = await UnixStreamSocket.ConnectAsync(
                 archiverPath,
-                group,
-                port,
-                IPAddress.Loopback);
+                timeout.Token);
+            using UdpMulticastSender multicast = new(group, port, IPAddress.Loopback);
+            SequencerServer sequencer = new(
+                submissionReceiver,
+                archiverConnection,
+                multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
             using UnixStreamSocket stream = await listener.AcceptAsync(timeout.Token);
-            using UnixDatagramSender proposals = new(proposalPath);
+            using UnixDatagramSender submissions = new(submissionPath);
 
             try
             {
-                await proposals.SendAsync(
+                await submissions.SendAsync(
                     EncodeStart(
                         new Guid("50617283-94a5-b6c7-d8e9-fa0b1c2d3e4f"),
                         new Guid("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f")),
@@ -247,10 +253,10 @@ public sealed class SequencerLivePathTests
     {
         byte[] payload = new byte[16];
         StartNewSessionCodec.Encode(new StartNewSession(sessionId), payload);
-        return EncodeProposal(MessageType.StartNewSession, messageId, payload);
+        return EncodeSubmission(MessageType.StartNewSession, messageId, payload);
     }
 
-    private static byte[] EncodeProposal(
+    private static byte[] EncodeSubmission(
         MessageType messageType,
         Guid messageId,
         ReadOnlySpan<byte> payload)
