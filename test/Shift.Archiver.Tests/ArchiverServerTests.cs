@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using Shift.Ipc;
 using Shift.Protocol;
@@ -35,10 +34,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        using ArchiverServer archiver = new(_archiveRoot);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(
             TestContext.Current.CancellationToken);
-        Task run = archiver.RunAsync(stop.Token);
+        Task run = archiver.RunAsync(connection.Server, stop.Token);
 
         byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
@@ -72,8 +71,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
 
         await SendBatchAsync(
             connection.Client,
@@ -89,8 +90,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
 
         byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
@@ -113,8 +116,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
 
         byte[] start = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         byte[] end = EncodeFrame(
@@ -145,12 +150,51 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
         ushort producerId = emptyCandidateId ? FrameCodec.ControlProducerId : FirstProducerId;
-        Guid sessionId = emptyCandidateId ? _firstSessionId : Guid.Empty;
+        byte[] start = emptyCandidateId
+            ? EncodeStart(producerId, 1, _firstSessionId, 1)
+            : EncodeFrame(MessageType.StartNewSession, producerId, 1, 1, new byte[16]);
 
-        await SendBatchAsync(connection.Client, EncodeStart(producerId, 1, sessionId, 1));
+        await SendBatchAsync(connection.Client, start);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => run);
+        Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
+    }
+
+    [Theory]
+    [InlineData(0, 1, false)]
+    [InlineData(1, 0, false)]
+    [InlineData(1, 1, true)]
+    public async Task RejectsCandidateRoleViolations(
+        int producerSequence,
+        long sequenceId,
+        bool commitThrough)
+    {
+        AssertUnixSockets();
+
+        using Connection connection = await Connection.CreateAsync(_socketPath);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
+        byte[] frame = commitThrough
+            ? EncodeFrame(
+                MessageType.CommitThrough,
+                FirstProducerId,
+                (ulong)producerSequence,
+                sequenceId,
+                [])
+            : EncodeStart(
+                FirstProducerId,
+                (ulong)producerSequence,
+                _firstSessionId,
+                sequenceId);
+
+        await SendBatchAsync(connection.Client, frame);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => run);
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
@@ -162,8 +206,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
         byte[] prefixes = new byte[2 * sizeof(uint)];
         BinaryPrimitives.WriteUInt32BigEndian(prefixes, 1);
         BinaryPrimitives.WriteUInt32BigEndian(prefixes.AsSpan(sizeof(uint)), 2_049);
@@ -180,8 +226,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
         byte[] count = new byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32BigEndian(count, uint.MaxValue);
 
@@ -197,18 +245,81 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
-        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
-        byte[] maximumFrame = new byte[UnixDatagramReceiver.MaximumDatagramSize];
-        BinaryPrimitives.WriteUInt32BigEndian(
-            maximumFrame,
-            UnixDatagramReceiver.MaximumDatagramSize);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
+        byte[] maximumFrame = FrameCodec.Encode(
+            MessageType.PlaceOrder,
+            FirstProducerId,
+            1,
+            1,
+            new byte[FrameCodec.MaximumFrameSize - FrameCodec.MinimumFrameSize]).Bytes.ToArray();
         byte[][] frames = Enumerable.Repeat(maximumFrame, 513).ToArray();
 
         await SendBatchAsync(connection.Client, frames);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => run);
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
+    }
+
+    [Fact]
+    public async Task RejectsCorruptLaterFrameBeforeCreatingLog()
+    {
+        AssertUnixSockets();
+
+        using Connection connection = await Connection.CreateAsync(_socketPath);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
+        byte[] corrupt = EncodeFrame(
+            MessageType.PlaceOrder,
+            SecondProducerId,
+            1,
+            2,
+            [0xde, 0xad]);
+        corrupt[^1] ^= 0xff;
+
+        await SendBatchAsync(
+            connection.Client,
+            EncodeStart(FirstProducerId, 1, _firstSessionId, 1),
+            corrupt);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => run);
+        Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
+    }
+
+    [Fact]
+    public async Task RejectsCorruptLaterFrameWithoutChangingOpenLog()
+    {
+        AssertUnixSockets();
+
+        using Connection connection = await Connection.CreateAsync(_socketPath);
+        using ArchiverServer archiver = new(_archiveRoot);
+        Task run = archiver.RunAsync(
+            connection.Server,
+            TestContext.Current.CancellationToken);
+        byte[] start = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
+        await SendBatchAsync(connection.Client, start);
+        await AssertAcknowledgementAsync(connection.Client, 1);
+        string path = Path.Combine(_archiveRoot, $"{_firstSessionId:N}.shiftlog");
+        byte[] before = File.ReadAllBytes(path);
+        byte[] corrupt = EncodeFrame(
+            MessageType.PlaceOrder,
+            ThirdProducerId,
+            1,
+            3,
+            [0xbe, 0xef]);
+        corrupt[^1] ^= 0xff;
+
+        await SendBatchAsync(
+            connection.Client,
+            EncodeFrame(MessageType.PlaceOrder, SecondProducerId, 1, 2, [0xde, 0xad]),
+            corrupt);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => run);
+        Assert.Equal(before, File.ReadAllBytes(path));
     }
 
     public void Dispose()
@@ -261,17 +372,8 @@ public sealed class ArchiverServerTests : IDisposable
         byte[] acknowledgement = new byte[FrameCodec.MinimumFrameSize];
         await socket.ReceiveExactlyAsync(acknowledgement, TestContext.Current.CancellationToken);
 
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(
-                acknowledgement,
-                out FrameHeader header,
-                out ReadOnlySpan<byte> payload));
-        Assert.Equal(MessageType.CommitThrough, header.MessageType);
-        Assert.Equal(FrameCodec.ControlProducerId, header.ProducerId);
-        Assert.Equal(0uL, header.ProducerSequence);
-        Assert.Equal(sequenceId, header.SequenceId);
-        Assert.True(payload.IsEmpty);
+        CanonicalFrame commit = FrameCodec.DecodeCommitThrough(acknowledgement);
+        Assert.Equal(sequenceId, commit.Header.SequenceId);
     }
 
     private static void AssertLog(string path, params byte[][][] committedBatches)
@@ -292,10 +394,7 @@ public sealed class ArchiverServerTests : IDisposable
             ReadOnlySpan<byte> marker = contents.AsSpan(offset, CommitMarkerSize);
             Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(marker));
             Assert.Equal(
-                OperationStatus.Done,
-                FrameCodec.TryDecode(batch[^1], out FrameHeader header, out _));
-            Assert.Equal(
-                header.SequenceId,
+                FrameCodec.DecodeSequencedCandidate(batch[^1]).Header.SequenceId,
                 BinaryPrimitives.ReadInt64BigEndian(marker[sizeof(uint)..]));
             Assert.Equal(
                 Crc32C.Compute(marker[..^sizeof(uint)]),
@@ -350,6 +449,7 @@ public sealed class ArchiverServerTests : IDisposable
         public void Dispose()
         {
             Client.Dispose();
+            Server.Dispose();
             _listener.Dispose();
         }
     }

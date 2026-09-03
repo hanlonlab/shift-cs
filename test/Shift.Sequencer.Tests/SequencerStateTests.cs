@@ -11,6 +11,14 @@ public class SequencerStateTests
     private static readonly Guid _firstSessionId = new("10213243-5465-7687-98a9-bacbdcedfe0f");
 
     [Fact]
+    public void RejectsUnverifiedSubmission()
+    {
+        SequencerState state = new();
+
+        Assert.Throws<ArgumentException>(() => state.Submit(default));
+    }
+
+    [Fact]
     public void SequencesSessionMessagesStartingAtOne()
     {
         SequencerState state = new();
@@ -32,46 +40,16 @@ public class SequencerStateTests
     }
 
     [Fact]
-    public void RejectsInvalidSubmissionFramesWithoutChangingState()
-    {
-        SequencerState state = new();
-        byte[] sequencedFrame = EncodeSubmissionFrame(
-            MessageType.StartNewSession,
-            FirstProducerId,
-            1,
-            EncodeStartPayload(_firstSessionId),
-            sequenceId: 1);
-        byte[] commitThrough = EncodeSubmissionFrame(
-            MessageType.CommitThrough,
-            FirstProducerId,
-            1,
-            []);
-        byte[] controlProducer = EncodeStartFrame(FrameCodec.ControlProducerId, 1, _firstSessionId);
-        byte[] zeroProducerSequence = EncodeStartFrame(FirstProducerId, 0, _firstSessionId);
-        byte[] corrupt = EncodeStartFrame(
-            FirstProducerId,
-            1,
-            _firstSessionId);
-        corrupt[FrameCodec.HeaderSize] ^= 0xff;
-
-        Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(sequencedFrame));
-        Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(commitThrough));
-        Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(controlProducer));
-        Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(zeroProducerSequence));
-        Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(corrupt));
-        Assert.Throws<ArgumentException>(() => state.Submit(default));
-
-        SubmissionResult accepted = state.Submit(EncodeStart(FirstProducerId, 1, _firstSessionId));
-        Assert.Equal(1, DecodeSequence(accepted.Frame.Span));
-    }
-
-    [Fact]
     public void StartRequiresNonemptySessionId()
     {
         SequencerState state = new();
 
         Assert.Throws<InvalidDataException>(() =>
-            state.Submit(EncodeStart(FirstProducerId, 1, Guid.Empty)));
+            state.Submit(EncodeSubmission(
+                MessageType.StartNewSession,
+                FirstProducerId,
+                1,
+                new byte[16])));
         Assert.Throws<InvalidDataException>(() =>
             state.Submit(EncodeSubmission(MessageType.StartNewSession, FirstProducerId, 1, [])));
 
@@ -333,11 +311,13 @@ public class SequencerStateTests
         SequencerState state = new();
         state.Submit(EncodeStart(FirstProducerId, 1, _firstSessionId));
         state.CommitThrough(1);
-        byte[] payload = new byte[2_048 - FrameCodec.MinimumFrameSize];
+        byte[] payload = new byte[FrameCodec.MaximumFrameSize - FrameCodec.MinimumFrameSize];
         VerifiedSubmission lastSubmission = default;
         SubmissionResult lastAccepted = default;
 
-        for (int index = 0; index < SequencerState.MaximumPendingBytes / 2_048; index++)
+        for (int index = 0;
+             index < SequencerState.MaximumPendingBytes / FrameCodec.MaximumFrameSize;
+             index++)
         {
             ulong producerSequence = (ulong)(index + 2);
             lastSubmission = EncodeSubmission(MessageType.PlaceOrder, FirstProducerId, producerSequence, payload);
@@ -349,7 +329,7 @@ public class SequencerStateTests
         SubmissionResult full = state.Submit(EncodeSubmission(
             MessageType.PlaceOrder,
             FirstProducerId,
-            (ulong)((SequencerState.MaximumPendingBytes / 2_048) + 2),
+            (ulong)((SequencerState.MaximumPendingBytes / FrameCodec.MaximumFrameSize) + 2),
             []));
         Assert.Equal(SubmissionStatus.BatchFull, full.Status);
 
@@ -357,7 +337,7 @@ public class SequencerStateTests
         SubmissionResult accepted = state.Submit(EncodeSubmission(
             MessageType.PlaceOrder,
             FirstProducerId,
-            (ulong)((SequencerState.MaximumPendingBytes / 2_048) + 2),
+            (ulong)((SequencerState.MaximumPendingBytes / FrameCodec.MaximumFrameSize) + 2),
             []));
         Assert.Equal(SubmissionStatus.Accepted, accepted.Status);
     }
@@ -379,15 +359,6 @@ public class SequencerStateTests
             EncodeStartPayload(sessionId));
     }
 
-    private static byte[] EncodeStartFrame(ushort producerId, ulong producerSequence, Guid sessionId)
-    {
-        return EncodeSubmissionFrame(
-            MessageType.StartNewSession,
-            producerId,
-            producerSequence,
-            EncodeStartPayload(sessionId));
-    }
-
     private static byte[] EncodeStartPayload(Guid sessionId)
     {
         byte[] payload = new byte[16];
@@ -399,22 +370,9 @@ public class SequencerStateTests
         MessageType messageType,
         ushort producerId,
         ulong producerSequence,
-        byte[] payload,
-        long sequenceId = 0)
+        byte[] payload)
     {
         return VerifiedSubmission.Verify(
-            EncodeSubmissionFrame(messageType, producerId, producerSequence, payload, sequenceId));
-    }
-
-    private static byte[] EncodeSubmissionFrame(
-        MessageType messageType,
-        ushort producerId,
-        ulong producerSequence,
-        byte[] payload,
-        long sequenceId = 0)
-    {
-        byte[] submission = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, producerId, producerSequence, sequenceId, payload, submission);
-        return submission;
+            FrameCodec.Encode(messageType, producerId, producerSequence, 0, payload).Bytes);
     }
 }

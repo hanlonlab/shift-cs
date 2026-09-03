@@ -8,6 +8,11 @@ public static class StartNewSessionCodec
 
     public static int Encode(StartNewSession command, Span<byte> destination)
     {
+        if (command.SessionId == Guid.Empty)
+        {
+            throw new ArgumentOutOfRangeException(nameof(command));
+        }
+
         if (destination.Length < EncodedLength)
         {
             throw new ArgumentException("Destination is too small for the encoded command.", nameof(destination));
@@ -25,7 +30,14 @@ public static class StartNewSessionCodec
             return false;
         }
 
-        command = new StartNewSession(new Guid(source, bigEndian: true));
+        Guid sessionId = new(source, bigEndian: true);
+        if (sessionId == Guid.Empty)
+        {
+            command = default;
+            return false;
+        }
+
+        command = new StartNewSession(sessionId);
         return true;
     }
 }

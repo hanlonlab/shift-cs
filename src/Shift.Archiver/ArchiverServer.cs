@@ -1,35 +1,36 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
-using Shift.Protocol.Internal.Commands;
 
 namespace Shift.Archiver;
 
-public sealed class ArchiverServer(
-    string archiveRoot,
-    UnixStreamSocket sequencer) : IDisposable
+public sealed class ArchiverServer(string archiveRoot) : IDisposable
 {
     private const int MaximumBatchBytes = 1024 * 1024;
     private const int MaximumBatchFrameCount = MaximumBatchBytes / FrameCodec.MinimumFrameSize;
 
-    private SessionLog? _sessionLog;
-    private long _lastSequence;
+    private readonly SessionArchive _archive = new(archiveRoot);
 
-    public async Task RunAsync(CancellationToken cancellationToken = default)
+    public async Task RunAsync(
+        UnixStreamSocket sequencer,
+        CancellationToken cancellationToken = default)
     {
         byte[] prefix = new byte[sizeof(uint)];
 
         while (true)
         {
-            List<byte[]> frames = await ReceiveBatchAsync(prefix, cancellationToken);
-            (Guid sessionId, bool endsSession) = ValidateBatch(frames);
-            long committedThrough = ArchiveBatch(frames, sessionId, endsSession);
-            await SendAcknowledgementAsync(committedThrough, cancellationToken);
+            CanonicalFrame[] frames = await ReceiveBatchAsync(
+                sequencer,
+                prefix,
+                cancellationToken);
+            long committedThrough = _archive.CommitBatch(frames);
+            CanonicalFrame acknowledgement = FrameCodec.EncodeCommitThrough(committedThrough);
+            await sequencer.SendExactlyAsync(acknowledgement.Bytes, cancellationToken);
         }
     }
 
-    private async Task<List<byte[]>> ReceiveBatchAsync(
+    private static async Task<CanonicalFrame[]> ReceiveBatchAsync(
+        UnixStreamSocket sequencer,
         byte[] prefix,
         CancellationToken cancellationToken)
     {
@@ -41,167 +42,30 @@ public sealed class ArchiverServer(
                 $"A batch must contain between 1 and {MaximumBatchFrameCount} frames.");
         }
 
-        List<byte[]> frames = new((int)frameCount);
+        var frames = new CanonicalFrame[frameCount];
         int batchBytes = 0;
-        for (uint index = 0; index < frameCount; index++)
+        for (int index = 0; index < frames.Length; index++)
         {
             await sequencer.ReceiveExactlyAsync(prefix, cancellationToken);
-            uint frameLength = BinaryPrimitives.ReadUInt32BigEndian(prefix);
-            if (frameLength is < FrameCodec.MinimumFrameSize
-                or > UnixDatagramReceiver.MaximumDatagramSize)
-            {
-                throw new InvalidDataException(
-                    $"Frame length must be between {FrameCodec.MinimumFrameSize} and {UnixDatagramReceiver.MaximumDatagramSize} bytes.");
-            }
-
-            int length = (int)frameLength;
-            if (length > MaximumBatchBytes - batchBytes)
+            int frameLength = FrameCodec.ReadFrameLength(prefix);
+            if (frameLength > MaximumBatchBytes - batchBytes)
             {
                 throw new InvalidDataException(
                     $"A batch cannot exceed {MaximumBatchBytes} canonical frame bytes.");
             }
 
-            byte[] frame = new byte[length];
+            byte[] frame = new byte[frameLength];
             prefix.CopyTo(frame, 0);
             await sequencer.ReceiveExactlyAsync(frame.AsMemory(sizeof(uint)), cancellationToken);
-            frames.Add(frame);
-            batchBytes += length;
+            frames[index] = FrameCodec.DecodeSequencedCandidate(frame);
+            batchBytes += frameLength;
         }
 
         return frames;
     }
 
-    private (Guid SessionId, bool EndsSession) ValidateBatch(List<byte[]> frames)
-    {
-        bool sessionActive = _sessionLog is not null;
-        long highWater = _lastSequence;
-        Guid sessionId = Guid.Empty;
-        bool endsSession = false;
-
-        for (int index = 0; index < frames.Count; index++)
-        {
-            byte[] frame = frames[index];
-            FrameHeader header = DecodeCandidateFrame(frame, out ReadOnlySpan<byte> payload);
-
-            long expectedSequence = checked(highWater + 1);
-            if (header.SequenceId != expectedSequence)
-            {
-                throw new InvalidDataException(
-                    $"Expected sequence {expectedSequence}, received {header.SequenceId}.");
-            }
-
-            if (header.MessageType == MessageType.StartNewSession)
-            {
-                if (sessionActive)
-                {
-                    throw new InvalidDataException("A session is already active.");
-                }
-
-                if (index != 0
-                    || !StartNewSessionCodec.TryDecode(payload, out StartNewSession command)
-                    || command.SessionId == Guid.Empty)
-                {
-                    throw new InvalidDataException(
-                        "An inactive Archiver batch must begin with a valid StartNewSession.");
-                }
-
-                sessionId = command.SessionId;
-                sessionActive = true;
-            }
-            else if (!sessionActive)
-            {
-                throw new InvalidDataException(
-                    "An inactive Archiver batch must begin with StartNewSession.");
-            }
-
-            if (header.MessageType == MessageType.EndCurrentSession)
-            {
-                if (!payload.IsEmpty)
-                {
-                    throw new InvalidDataException("EndCurrentSession payload must be empty.");
-                }
-
-                if (index != frames.Count - 1)
-                {
-                    throw new InvalidDataException("EndCurrentSession must be the final frame in its batch.");
-                }
-
-                endsSession = true;
-            }
-
-            highWater = header.SequenceId;
-        }
-
-        return (sessionId, endsSession);
-    }
-
-    private static FrameHeader DecodeCandidateFrame(
-        byte[] frame,
-        out ReadOnlySpan<byte> payload)
-    {
-        OperationStatus status = FrameCodec.TryDecode(frame, out FrameHeader header, out payload);
-        if (status != OperationStatus.Done)
-        {
-            throw new InvalidDataException("Batch contains an invalid frame.");
-        }
-
-        if (header.ProducerId == FrameCodec.ControlProducerId || header.ProducerSequence == 0)
-        {
-            throw new InvalidDataException("Candidate producer identity must not be zero.");
-        }
-
-        if (header.MessageType == MessageType.CommitThrough)
-        {
-            throw new InvalidDataException("CommitThrough is not a candidate frame.");
-        }
-
-        return header;
-    }
-
-    private long ArchiveBatch(List<byte[]> frames, Guid sessionId, bool endsSession)
-    {
-        if (_sessionLog is null)
-        {
-            string path = Path.Combine(archiveRoot, $"{sessionId:N}.shiftlog");
-            _sessionLog = new SessionLog(path);
-        }
-
-        foreach (byte[] frame in frames)
-        {
-            _sessionLog.Append(frame);
-        }
-
-        long committedThrough = _sessionLog.Commit();
-        _lastSequence = committedThrough;
-
-        if (endsSession)
-        {
-            _sessionLog.Dispose();
-            _sessionLog = null;
-            _lastSequence = 0;
-        }
-
-        return committedThrough;
-    }
-
-    private ValueTask SendAcknowledgementAsync(
-        long committedThrough,
-        CancellationToken cancellationToken)
-    {
-        byte[] acknowledgement = new byte[FrameCodec.MinimumFrameSize];
-        FrameCodec.Encode(
-            MessageType.CommitThrough,
-            FrameCodec.ControlProducerId,
-            0,
-            committedThrough,
-            ReadOnlySpan<byte>.Empty,
-            acknowledgement);
-        return sequencer.SendExactlyAsync(acknowledgement, cancellationToken);
-    }
-
     public void Dispose()
     {
-        _sessionLog?.Dispose();
-        sequencer.Dispose();
+        _archive.Dispose();
     }
 }

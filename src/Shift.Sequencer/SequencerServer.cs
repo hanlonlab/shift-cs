@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
@@ -167,25 +166,9 @@ public sealed class SequencerServer(
         CancellationToken cancellationToken)
     {
         byte[] durableWatermark = new byte[FrameCodec.MinimumFrameSize];
-        await archiver.ReceiveExactlyAsync(
-            durableWatermark.AsMemory(0, sizeof(uint)),
-            cancellationToken);
-        if (BinaryPrimitives.ReadUInt32BigEndian(durableWatermark) != FrameCodec.MinimumFrameSize)
-        {
-            throw new InvalidDataException("The Archiver returned an invalid durable watermark length.");
-        }
-
-        await archiver.ReceiveExactlyAsync(durableWatermark.AsMemory(sizeof(uint)), cancellationToken);
-
-        OperationStatus status = FrameCodec.TryDecode(
-            durableWatermark,
-            out FrameHeader header,
-            out _);
-        if (status != OperationStatus.Done
-            || header.MessageType != MessageType.CommitThrough
-            || header.ProducerId != FrameCodec.ControlProducerId
-            || header.ProducerSequence != 0
-            || header.SequenceId != expectedSequence)
+        await archiver.ReceiveExactlyAsync(durableWatermark, cancellationToken);
+        CanonicalFrame acknowledgement = FrameCodec.DecodeCommitThrough(durableWatermark);
+        if (acknowledgement.Header.SequenceId != expectedSequence)
         {
             throw new InvalidDataException("The Archiver returned an invalid durable watermark.");
         }

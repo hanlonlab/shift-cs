@@ -1,56 +1,7 @@
-using System.Buffers;
 using Shift.Protocol.Framing;
 using Shift.Protocol.Internal.Commands;
 
 namespace Shift.Sequencer;
-
-public readonly struct VerifiedSubmission
-{
-    private VerifiedSubmission(ReadOnlyMemory<byte> frame, FrameHeader header)
-    {
-        Frame = frame;
-        Header = header;
-    }
-
-    internal ReadOnlyMemory<byte> Frame { get; }
-
-    internal FrameHeader Header { get; }
-
-    internal ReadOnlySpan<byte> Payload => Frame.Span.Slice(
-        FrameCodec.HeaderSize,
-        Frame.Length - FrameCodec.MinimumFrameSize);
-
-    public static VerifiedSubmission Verify(ReadOnlyMemory<byte> frame)
-    {
-        OperationStatus status = FrameCodec.TryDecode(frame.Span, out FrameHeader header, out _);
-        if (status != OperationStatus.Done)
-        {
-            throw new InvalidDataException("Submission must contain exactly one valid encoded frame.");
-        }
-
-        if (header.SequenceId != 0)
-        {
-            throw new InvalidDataException("Submission sequence must be zero.");
-        }
-
-        if (header.ProducerId == FrameCodec.ControlProducerId)
-        {
-            throw new InvalidDataException("Submission producer ID cannot be zero.");
-        }
-
-        if (header.ProducerSequence == 0)
-        {
-            throw new InvalidDataException("Submission producer sequence cannot be zero.");
-        }
-
-        if (header.MessageType == MessageType.CommitThrough)
-        {
-            throw new InvalidDataException("CommitThrough is not a submission.");
-        }
-
-        return new VerifiedSubmission(frame, header);
-    }
-}
 
 public enum SubmissionStatus
 {
@@ -76,7 +27,7 @@ public sealed class SequencerState
     private bool _faulted;
     private bool _sessionActive;
     private Guid _sessionId;
-    private byte[] _sessionStartFrame = [];
+    private ReadOnlyMemory<byte> _sessionStartFrame;
 
     public long LastAcceptedSequence { get; private set; }
 
@@ -86,13 +37,13 @@ public sealed class SequencerState
     {
         ThrowIfFaulted();
 
-        if (submission.Frame.IsEmpty)
+        if (submission.Frame.Bytes.IsEmpty)
         {
             throw new ArgumentException("Submission must be verified.", nameof(submission));
         }
 
-        FrameHeader header = submission.Header;
-        ReadOnlySpan<byte> payload = submission.Payload;
+        FrameHeader header = submission.Frame.Header;
+        ReadOnlySpan<byte> payload = submission.Frame.Payload.Span;
         Guid sessionId = DecodeSessionId(header.MessageType, payload);
         bool opensSession = sessionId != Guid.Empty && !_sessionActive;
         if (opensSession && sessionId == _sessionId)
@@ -116,7 +67,7 @@ public sealed class SequencerState
 
         ValidateProducerSequence(header.ProducerId, header.ProducerSequence, opensSession);
 
-        if (submission.Frame.Length > MaximumPendingBytes - _pendingBytes)
+        if (submission.Frame.Bytes.Length > MaximumPendingBytes - _pendingBytes)
         {
             return new SubmissionResult(
                 SubmissionStatus.BatchFull,
@@ -139,8 +90,7 @@ public sealed class SequencerState
             return Guid.Empty;
         }
 
-        if (!StartNewSessionCodec.TryDecode(payload, out StartNewSession command)
-            || command.SessionId == Guid.Empty)
+        if (!StartNewSessionCodec.TryDecode(payload, out StartNewSession command))
         {
             throw new InvalidDataException("StartNewSession requires a nonempty session ID.");
         }
@@ -167,7 +117,8 @@ public sealed class SequencerState
             throw new InvalidOperationException("The current session is awaiting its final commit.");
         }
 
-        if (messageType == MessageType.EndCurrentSession && !payload.IsEmpty)
+        if (messageType == MessageType.EndCurrentSession
+            && !EndCurrentSessionCodec.IsValidPayload(payload))
         {
             throw new InvalidDataException("EndCurrentSession payload must be empty.");
         }
@@ -178,25 +129,23 @@ public sealed class SequencerState
         bool opensSession,
         Guid sessionId)
     {
-        FrameHeader header = submission.Header;
-        ReadOnlySpan<byte> payload = submission.Payload;
+        FrameHeader header = submission.Frame.Header;
+        ReadOnlySpan<byte> payload = submission.Frame.Payload.Span;
         bool endsSession = header.MessageType == MessageType.EndCurrentSession;
         long sequenceId = opensSession ? 1 : checked(LastAcceptedSequence + 1);
-        byte[] frame = new byte[submission.Frame.Length];
-        FrameCodec.Encode(
+        CanonicalFrame frame = FrameCodec.Encode(
             header.MessageType,
             header.ProducerId,
             header.ProducerSequence,
             sequenceId,
-            payload,
-            frame);
+            payload);
 
         if (opensSession)
         {
             _producers.Clear();
             _sessionActive = true;
             _sessionId = sessionId;
-            _sessionStartFrame = frame;
+            _sessionStartFrame = frame.Bytes;
         }
 
         if (!_producers.TryGetValue(header.ProducerId, out ProducerState? producer))
@@ -208,7 +157,7 @@ public sealed class SequencerState
         producer.LastAcceptedProducerSequence = header.ProducerSequence;
         producer.LastAcceptedFrame = frame;
         LastAcceptedSequence = sequenceId;
-        _pendingBytes += frame.Length;
+        _pendingBytes += frame.Bytes.Length;
 
         if (endsSession)
         {
@@ -217,7 +166,7 @@ public sealed class SequencerState
 
         return new SubmissionResult(
             SubmissionStatus.Accepted,
-            frame,
+            frame.Bytes,
             ForceCommit: endsSession || _pendingBytes == MaximumPendingBytes);
     }
 
@@ -279,12 +228,8 @@ public sealed class SequencerState
 
         if (header.ProducerSequence == existing.LastAcceptedProducerSequence)
         {
-            FrameCodec.TryDecode(
-                existing.LastAcceptedFrame,
-                out FrameHeader existingHeader,
-                out ReadOnlySpan<byte> existingPayload);
-            bool sameContent = header.MessageType == existingHeader.MessageType
-                && payload.SequenceEqual(existingPayload);
+            bool sameContent = header.MessageType == existing.LastAcceptedFrame.Header.MessageType
+                && payload.SequenceEqual(existing.LastAcceptedFrame.Payload.Span);
             if (!sameContent)
             {
                 _faulted = true;
@@ -294,7 +239,7 @@ public sealed class SequencerState
             return header.ProducerSequence <= existing.LastCommittedProducerSequence
                 ? new SubmissionResult(
                     SubmissionStatus.CommittedDuplicate,
-                    existing.LastAcceptedFrame,
+                    existing.LastAcceptedFrame.Bytes,
                     ForceCommit: false)
                 : new SubmissionResult(
                     SubmissionStatus.PendingDuplicate,
@@ -332,6 +277,6 @@ public sealed class SequencerState
 
         public ulong LastCommittedProducerSequence { get; set; }
 
-        public byte[] LastAcceptedFrame { get; set; } = [];
+        public CanonicalFrame LastAcceptedFrame { get; set; }
     }
 }

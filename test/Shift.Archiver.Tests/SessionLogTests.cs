@@ -7,7 +7,6 @@ namespace Shift.Archiver.Tests;
 
 public sealed class SessionLogTests : IDisposable
 {
-    private const ushort ProducerId = 1;
     private static readonly byte[] _payload = [0xde, 0xad, 0xbe, 0xef];
     private static readonly byte[] _flushBoundaryThroughOne =
     [
@@ -25,115 +24,72 @@ public sealed class SessionLogTests : IDisposable
     }
 
     [Fact]
-    public void CommitWritesCanonicalFrameAndMarker()
+    public void CommitBatchWritesExactFrameAndMarker()
     {
         string path = Path.Combine(_directory, "session.shiftlog");
-        byte[] frame = EncodeFrame(1);
+        CanonicalFrame frame = EncodeFrame(1);
         using SessionLog log = new(path);
 
-        log.Append(frame);
-        long committedThrough = log.Commit();
+        log.CommitBatch([frame], 1);
 
-        byte[] expected = new byte[frame.Length + _flushBoundaryThroughOne.Length];
-        frame.CopyTo(expected, 0);
-        _flushBoundaryThroughOne.CopyTo(expected, frame.Length);
-        Assert.Equal(1, committedThrough);
+        byte[] expected = new byte[frame.Bytes.Length + _flushBoundaryThroughOne.Length];
+        frame.Bytes.CopyTo(expected);
+        _flushBoundaryThroughOne.CopyTo(expected, frame.Bytes.Length);
         Assert.Equal(expected, File.ReadAllBytes(path));
     }
 
     [Fact]
-    public void CommitIncludesEveryPendingFrame()
+    public void CommitBatchWritesEveryFrameBeforeOneMarker()
     {
         string path = Path.Combine(_directory, "session.shiftlog");
+        CanonicalFrame first = EncodeFrame(1);
+        CanonicalFrame second = EncodeFrame(2);
         using SessionLog log = new(path);
 
-        log.Append(EncodeFrame(1));
-        log.Append(EncodeFrame(2));
+        log.CommitBatch([first, second], 2);
 
-        Assert.Equal(2, log.Commit());
-    }
-
-    [Fact]
-    public void SequenceContinuesAcrossFlushBoundaries()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        byte[] firstFrame = EncodeFrame(1);
-        byte[] secondFrame = EncodeFrame(2);
-        using SessionLog log = new(path);
-
-        log.Append(firstFrame);
-        Assert.Equal(1, log.Commit());
-        log.Append(secondFrame);
-        Assert.Equal(2, log.Commit());
-
-        byte[] bytes = File.ReadAllBytes(path);
-        int secondMarkerOffset = firstFrame.Length
-            + _flushBoundaryThroughOne.Length
-            + secondFrame.Length;
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(secondMarkerOffset)));
+        byte[] contents = File.ReadAllBytes(path);
+        Assert.Equal(first.Bytes.Span, contents.AsSpan(0, first.Bytes.Length));
         Assert.Equal(
-            2,
-            BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(secondMarkerOffset + sizeof(uint))));
+            second.Bytes.Span,
+            contents.AsSpan(first.Bytes.Length, second.Bytes.Length));
+        AssertMarker(contents.AsSpan(first.Bytes.Length + second.Bytes.Length), 2);
+    }
 
-        ReadOnlySpan<byte> marker = bytes.AsSpan(secondMarkerOffset, _flushBoundaryThroughOne.Length);
+    [Fact]
+    public void CommitBatchAppendsAndFlushesEachBatch()
+    {
+        string path = Path.Combine(_directory, "session.shiftlog");
+        CanonicalFrame first = EncodeFrame(1);
+        CanonicalFrame second = EncodeFrame(2);
+        using SessionLog log = new(path);
+
+        log.CommitBatch([first], 1);
+
+        byte[] firstCommit = File.ReadAllBytes(path);
+        Assert.Equal(first.Bytes.Span, firstCommit.AsSpan(0, first.Bytes.Length));
+        AssertMarker(firstCommit.AsSpan(first.Bytes.Length), 1);
+
+        log.CommitBatch([second], 2);
+
+        byte[] secondCommit = File.ReadAllBytes(path);
+        int secondFrameOffset = firstCommit.Length;
         Assert.Equal(
-            Crc32C.Compute(marker[..^sizeof(uint)]),
-            BinaryPrimitives.ReadUInt32BigEndian(marker[^sizeof(uint)..]));
+            second.Bytes.Span,
+            secondCommit.AsSpan(secondFrameOffset, second.Bytes.Length));
+        AssertMarker(secondCommit.AsSpan(secondFrameOffset + second.Bytes.Length), 2);
     }
 
     [Fact]
-    public void AppendRequiresContiguousSequencesStartingAtOne()
+    public void IoFailurePermanentlyFaultsLog()
     {
         string path = Path.Combine(_directory, "session.shiftlog");
+        CanonicalFrame frame = EncodeFrame(1);
         using SessionLog log = new(path);
+        log.Dispose();
 
-        Assert.Throws<InvalidDataException>(() => log.Append(EncodeFrame(0)));
-        log.Append(EncodeFrame(1));
-        Assert.Throws<InvalidDataException>(() => log.Append(EncodeFrame(1)));
-        Assert.Throws<InvalidDataException>(() => log.Append(EncodeFrame(3)));
-        log.Append(EncodeFrame(2));
-
-        Assert.Equal(2, log.Commit());
-    }
-
-    [Fact]
-    public void AppendRejectsInvalidFrames()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        byte[] corrupt = EncodeFrame(1);
-        corrupt[FrameCodec.HeaderSize] ^= 0xff;
-        using SessionLog log = new(path);
-
-        Assert.Throws<InvalidDataException>(() => log.Append(corrupt));
-        Assert.Throws<InvalidDataException>(() => log.Append(corrupt.AsSpan(0, corrupt.Length - 1)));
-        log.Append(EncodeFrame(1));
-
-        Assert.Equal(1, log.Commit());
-    }
-
-    [Fact]
-    public void AppendRejectsCommitThroughFrames()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        using SessionLog log = new(path);
-
-        Assert.Throws<InvalidDataException>(() =>
-            log.Append(EncodeFrame(1, MessageType.CommitThrough)));
-        log.Append(EncodeFrame(1));
-
-        Assert.Equal(1, log.Commit());
-    }
-
-    [Fact]
-    public void CommitRejectsNoPendingFrames()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        using SessionLog log = new(path);
-
-        Assert.Throws<InvalidOperationException>(() => log.Commit());
-        log.Append(EncodeFrame(1));
-        Assert.Equal(1, log.Commit());
-        Assert.Throws<InvalidOperationException>(() => log.Commit());
+        Assert.Throws<ObjectDisposedException>(() => log.CommitBatch([frame], 1));
+        Assert.Throws<InvalidOperationException>(() => log.CommitBatch([frame], 1));
     }
 
     [Fact]
@@ -158,14 +114,23 @@ public sealed class SessionLogTests : IDisposable
         Directory.Delete(_directory, recursive: true);
     }
 
-    private static byte[] EncodeFrame(
-        long sequenceId,
-        MessageType messageType = MessageType.PlaceOrder,
-        byte[]? payload = null)
+    private static CanonicalFrame EncodeFrame(long sequenceId)
     {
-        payload ??= _payload;
-        byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, ProducerId, (ulong)sequenceId, sequenceId, payload, frame);
-        return frame;
+        return FrameCodec.Encode(
+            MessageType.PlaceOrder,
+            1,
+            (ulong)sequenceId,
+            sequenceId,
+            _payload);
+    }
+
+    private static void AssertMarker(ReadOnlySpan<byte> marker, long highWater)
+    {
+        Assert.Equal(sizeof(uint) + sizeof(long) + sizeof(uint), marker.Length);
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(marker));
+        Assert.Equal(highWater, BinaryPrimitives.ReadInt64BigEndian(marker[sizeof(uint)..]));
+        Assert.Equal(
+            Crc32C.Compute(marker[..^sizeof(uint)]),
+            BinaryPrimitives.ReadUInt32BigEndian(marker[^sizeof(uint)..]));
     }
 }

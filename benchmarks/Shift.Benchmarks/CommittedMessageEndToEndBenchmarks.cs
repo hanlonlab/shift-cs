@@ -42,6 +42,7 @@ public class CommittedMessageEndToEndBenchmarks
     private UdpMulticastReceiver _committed = null!;
     private UnixDatagramReceiver _submissionReceiver = null!;
     private UnixStreamSocket _archiverConnection = null!;
+    private UnixStreamSocket _archiverStream = null!;
     private UdpMulticastSender _multicast = null!;
     private ArchiverServer _archiver = null!;
     private UnixDatagramSender _submissions = null!;
@@ -89,10 +90,10 @@ public class CommittedMessageEndToEndBenchmarks
             _archiverConnection,
             _multicast);
         _sequencerTask = sequencer.RunAsync(_shutdown.Token);
-        UnixStreamSocket archiverStream = _listener
+        _archiverStream = _listener
             .AcceptAsync(_shutdown.Token).AsTask().GetAwaiter().GetResult();
-        _archiver = new ArchiverServer(archiveRoot, archiverStream);
-        _archiverTask = _archiver.RunAsync(_shutdown.Token);
+        _archiver = new ArchiverServer(archiveRoot);
+        _archiverTask = _archiver.RunAsync(_archiverStream, _shutdown.Token);
         _submissions = new UnixDatagramSender(submissionPath);
     }
 
@@ -206,6 +207,7 @@ public class CommittedMessageEndToEndBenchmarks
         {
             _submissions.Dispose();
             _archiver.Dispose();
+            _archiverStream.Dispose();
             _multicast.Dispose();
             _archiverConnection.Dispose();
             _submissionReceiver.Dispose();

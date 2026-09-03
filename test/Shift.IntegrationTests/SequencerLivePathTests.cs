@@ -46,10 +46,9 @@ public sealed class SequencerLivePathTests
                 archiverConnection,
                 multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
-            using ArchiverServer archiver = new(
-                archiveRoot,
-                await listener.AcceptAsync(timeout.Token));
-            Task archiverTask = archiver.RunAsync(timeout.Token);
+            using UnixStreamSocket archiverStream = await listener.AcceptAsync(timeout.Token);
+            using ArchiverServer archiver = new(archiveRoot);
+            Task archiverTask = archiver.RunAsync(archiverStream, timeout.Token);
             using UnixDatagramSender submissions = new(submissionPath);
 
             try
@@ -106,8 +105,16 @@ public sealed class SequencerLivePathTests
         }
     }
 
-    [Fact]
-    public async Task DoesNotMulticastBeforeTheExactDurableAcknowledgement()
+    [Theory]
+    [InlineData(InvalidAcknowledgement.Length)]
+    [InlineData(InvalidAcknowledgement.Checksum)]
+    [InlineData(InvalidAcknowledgement.MessageType)]
+    [InlineData(InvalidAcknowledgement.ProducerId)]
+    [InlineData(InvalidAcknowledgement.ProducerSequence)]
+    [InlineData(InvalidAcknowledgement.Payload)]
+    [InlineData(InvalidAcknowledgement.HighWater)]
+    public async Task DoesNotMulticastBeforeAnExactDurableAcknowledgement(
+        InvalidAcknowledgement invalidAcknowledgement)
     {
         Assert.SkipWhen(
             !OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux(),
@@ -152,15 +159,9 @@ public sealed class SequencerLivePathTests
                 Assert.Equal(1, candidate.SequenceId);
                 await AssertNoMulticastAsync(committed, timeout.Token);
 
-                byte[] wrongAcknowledgement = new byte[FrameCodec.MinimumFrameSize];
-                FrameCodec.Encode(
-                    MessageType.CommitThrough,
-                    FrameCodec.ControlProducerId,
-                    0,
-                    2,
-                    ReadOnlySpan<byte>.Empty,
-                    wrongAcknowledgement);
-                await stream.SendExactlyAsync(wrongAcknowledgement, timeout.Token);
+                await stream.SendExactlyAsync(
+                    EncodeInvalidAcknowledgement(invalidAcknowledgement),
+                    timeout.Token);
 
                 await Assert.ThrowsAsync<InvalidDataException>(async () => await sequencerTask);
                 await AssertNoMulticastAsync(committed, timeout.Token);
@@ -211,15 +212,12 @@ public sealed class SequencerLivePathTests
         Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(prefix));
 
         await stream.ReceiveExactlyAsync(prefix, cancellationToken);
-        int frameLength = checked((int)BinaryPrimitives.ReadUInt32BigEndian(prefix));
+        int frameLength = FrameCodec.ReadFrameLength(prefix);
         byte[] frame = new byte[frameLength];
         prefix.CopyTo(frame, 0);
         await stream.ReceiveExactlyAsync(frame.AsMemory(sizeof(uint)), cancellationToken);
 
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(frame, out FrameHeader header, out _));
-        return header;
+        return FrameCodec.DecodeSequencedCandidate(frame).Header;
     }
 
     private static async Task AssertNoMulticastAsync(
@@ -270,10 +268,66 @@ public sealed class SequencerLivePathTests
         return frame;
     }
 
+    private static byte[] EncodeInvalidAcknowledgement(
+        InvalidAcknowledgement invalidAcknowledgement)
+    {
+        switch (invalidAcknowledgement)
+        {
+            case InvalidAcknowledgement.Length:
+                byte[] invalidLength = FrameCodec.EncodeCommitThrough(1).Bytes.ToArray();
+                BinaryPrimitives.WriteUInt32BigEndian(
+                    invalidLength,
+                    FrameCodec.MinimumFrameSize - 1);
+                return invalidLength;
+            case InvalidAcknowledgement.Checksum:
+                byte[] invalidChecksum = FrameCodec.EncodeCommitThrough(1).Bytes.ToArray();
+                invalidChecksum[^1] ^= 0xff;
+                return invalidChecksum;
+            case InvalidAcknowledgement.MessageType:
+                return FrameCodec.Encode(
+                    MessageType.PlaceOrder,
+                    FrameCodec.ControlProducerId,
+                    0,
+                    1,
+                    []).Bytes.ToArray();
+            case InvalidAcknowledgement.ProducerId:
+                return FrameCodec.Encode(MessageType.CommitThrough, 1, 0, 1, []).Bytes.ToArray();
+            case InvalidAcknowledgement.ProducerSequence:
+                return FrameCodec.Encode(
+                    MessageType.CommitThrough,
+                    FrameCodec.ControlProducerId,
+                    1,
+                    1,
+                    []).Bytes.ToArray();
+            case InvalidAcknowledgement.Payload:
+                return FrameCodec.Encode(
+                    MessageType.CommitThrough,
+                    FrameCodec.ControlProducerId,
+                    0,
+                    1,
+                    [0x01]).Bytes.ToArray();
+            case InvalidAcknowledgement.HighWater:
+                return FrameCodec.EncodeCommitThrough(2).Bytes.ToArray();
+            default:
+                throw new ArgumentOutOfRangeException(nameof(invalidAcknowledgement));
+        }
+    }
+
     private static int GetUnusedPort()
     {
         using Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         return ((IPEndPoint)socket.LocalEndPoint!).Port;
+    }
+
+    public enum InvalidAcknowledgement
+    {
+        Length,
+        Checksum,
+        MessageType,
+        ProducerId,
+        ProducerSequence,
+        Payload,
+        HighWater,
     }
 }

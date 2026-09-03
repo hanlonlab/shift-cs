@@ -18,6 +18,7 @@ public static class FrameCodec
 {
     public const byte CurrentVersion = 1;
     public const ushort ControlProducerId = 0;
+    public const int MaximumFrameSize = 2_048;
 
     private const int FrameLengthFieldSize = sizeof(uint);
     private const int VersionOffset = FrameLengthFieldSize;
@@ -47,17 +48,7 @@ public static class FrameCodec
         ReadOnlySpan<byte> payload,
         Span<byte> destination)
     {
-        if (messageType == default)
-        {
-            throw new ArgumentOutOfRangeException(nameof(messageType));
-        }
-
-        if (payload.Length > int.MaxValue - MinimumFrameSize)
-        {
-            throw new ArgumentOutOfRangeException(nameof(payload));
-        }
-
-        int frameLength = MinimumFrameSize + payload.Length;
+        int frameLength = GetFrameLength(messageType, payload.Length);
         if (destination.Length < frameLength)
         {
             throw new ArgumentException("Destination is too small for the encoded frame.", nameof(destination));
@@ -92,6 +83,53 @@ public static class FrameCodec
     }
 
     /// <summary>
+    /// Allocates and encodes one frame.
+    /// </summary>
+    public static CanonicalFrame Encode(
+        MessageType messageType,
+        ushort producerId,
+        ulong producerSequence,
+        long sequenceId,
+        ReadOnlySpan<byte> payload)
+    {
+        int frameLength = GetFrameLength(messageType, payload.Length);
+        byte[] bytes = new byte[frameLength];
+        Encode(messageType, producerId, producerSequence, sequenceId, payload, bytes);
+
+        FrameHeader header = new(
+            (uint)frameLength,
+            CurrentVersion,
+            messageType,
+            producerId,
+            producerSequence,
+            sequenceId);
+        return new CanonicalFrame(
+            bytes,
+            header,
+            bytes.AsMemory(HeaderSize, payload.Length));
+    }
+
+    /// <summary>
+    /// Reads and validates the frame length prefix.
+    /// </summary>
+    public static int ReadFrameLength(ReadOnlySpan<byte> source)
+    {
+        if (source.Length < FrameLengthFieldSize)
+        {
+            throw new InvalidDataException("The frame length prefix is incomplete.");
+        }
+
+        uint declaredFrameLength = BinaryPrimitives.ReadUInt32BigEndian(source[..FrameLengthFieldSize]);
+        if (declaredFrameLength is < MinimumFrameSize or > MaximumFrameSize)
+        {
+            throw new InvalidDataException(
+                $"Frame length must be between {MinimumFrameSize} and {MaximumFrameSize} bytes.");
+        }
+
+        return (int)declaredFrameLength;
+    }
+
+    /// <summary>
     /// Attempts to decode one complete frame from <paramref name="source"/>.
     /// </summary>
     /// <remarks>
@@ -111,13 +149,16 @@ public static class FrameCodec
             return OperationStatus.NeedMoreData;
         }
 
-        uint declaredFrameLength = BinaryPrimitives.ReadUInt32BigEndian(source[..FrameLengthFieldSize]);
-        if (declaredFrameLength is < MinimumFrameSize or > int.MaxValue)
+        int frameLength;
+        try
+        {
+            frameLength = ReadFrameLength(source);
+        }
+        catch (InvalidDataException)
         {
             return OperationStatus.InvalidData;
         }
 
-        int frameLength = (int)declaredFrameLength;
         if (source.Length != frameLength)
         {
             return source.Length < frameLength
@@ -132,7 +173,8 @@ public static class FrameCodec
 
         ushort encodedMessageType = BinaryPrimitives.ReadUInt16BigEndian(
             source.Slice(MessageTypeOffset, MessageTypeFieldSize));
-        if (encodedMessageType == 0)
+        var messageType = (MessageType)encodedMessageType;
+        if (!Enum.IsDefined(messageType))
         {
             return OperationStatus.InvalidData;
         }
@@ -147,9 +189,9 @@ public static class FrameCodec
         }
 
         header = new FrameHeader(
-            declaredFrameLength,
+            (uint)frameLength,
             CurrentVersion,
-            (MessageType)encodedMessageType,
+            messageType,
             BinaryPrimitives.ReadUInt16BigEndian(source.Slice(ProducerIdOffset, ProducerIdFieldSize)),
             BinaryPrimitives.ReadUInt64BigEndian(
                 source.Slice(ProducerSequenceOffset, ProducerSequenceFieldSize)),
@@ -157,5 +199,90 @@ public static class FrameCodec
         int payloadLength = frameLength - MinimumFrameSize;
         payload = source.Slice(HeaderSize, payloadLength);
         return OperationStatus.Done;
+    }
+
+    public static CanonicalFrame DecodeSubmission(ReadOnlyMemory<byte> source)
+    {
+        CanonicalFrame frame = Decode(source);
+        FrameHeader header = frame.Header;
+        if (header.MessageType == MessageType.CommitThrough
+            || header.ProducerId == ControlProducerId
+            || header.ProducerSequence == 0
+            || header.SequenceId != 0)
+        {
+            throw new InvalidDataException("Frame is not a valid submission.");
+        }
+
+        return frame;
+    }
+
+    public static CanonicalFrame DecodeSequencedCandidate(ReadOnlyMemory<byte> source)
+    {
+        CanonicalFrame frame = Decode(source);
+        FrameHeader header = frame.Header;
+        if (header.MessageType == MessageType.CommitThrough
+            || header.ProducerId == ControlProducerId
+            || header.ProducerSequence == 0
+            || header.SequenceId <= 0)
+        {
+            throw new InvalidDataException("Frame is not a valid sequenced candidate.");
+        }
+
+        return frame;
+    }
+
+    public static CanonicalFrame DecodeCommitThrough(ReadOnlyMemory<byte> source)
+    {
+        CanonicalFrame frame = Decode(source);
+        FrameHeader header = frame.Header;
+        if (header.MessageType != MessageType.CommitThrough
+            || header.ProducerId != ControlProducerId
+            || header.ProducerSequence != 0
+            || header.SequenceId <= 0
+            || !frame.Payload.IsEmpty)
+        {
+            throw new InvalidDataException("Frame is not a valid commit-through acknowledgement.");
+        }
+
+        return frame;
+    }
+
+    public static CanonicalFrame EncodeCommitThrough(long sequenceId)
+    {
+        if (sequenceId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sequenceId));
+        }
+
+        return Encode(MessageType.CommitThrough, ControlProducerId, 0, sequenceId, []);
+    }
+
+    private static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
+    {
+        OperationStatus status = TryDecode(source.Span, out FrameHeader header, out _);
+        if (status != OperationStatus.Done)
+        {
+            throw new InvalidDataException("Source does not contain one valid canonical frame.");
+        }
+
+        return new CanonicalFrame(
+            source,
+            header,
+            source.Slice(HeaderSize, source.Length - MinimumFrameSize));
+    }
+
+    private static int GetFrameLength(MessageType messageType, int payloadLength)
+    {
+        if (!Enum.IsDefined(messageType))
+        {
+            throw new ArgumentOutOfRangeException(nameof(messageType));
+        }
+
+        if (payloadLength > MaximumFrameSize - MinimumFrameSize)
+        {
+            throw new ArgumentOutOfRangeException("payload");
+        }
+
+        return MinimumFrameSize + payloadLength;
     }
 }

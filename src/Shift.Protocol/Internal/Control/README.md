@@ -1,11 +1,11 @@
 # Internal Control Messages
 
-This directory owns operational messages used to coordinate protocol participants without expressing trading intent. Each future control message and its codec should occupy one file.
+This directory owns operational messages used to coordinate protocol participants without expressing trading intent. Control messages with payload schemas belong here; header-only frame profiles such as `CommitThrough` belong in `FrameCodec`.
 
 ## Belongs here
 
-- Commit-through, recovery, and lifecycle control payloads.
-- Control message identifiers and fixed field layouts.
+- Recovery and lifecycle control payloads.
+- Control payload identifiers and fixed field layouts.
 
 ## Does not belong here
 

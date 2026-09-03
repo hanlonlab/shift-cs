@@ -1,6 +1,6 @@
 # Shift.Sequencer
 
-Owns the single ordering loop. It deduplicates submissions by producer ID and producer sequence, assigns the session sequence, batches candidates for the Archiver, and multicasts only durably committed frames.
+Owns the single ordering loop. It asks `FrameCodec` to decode each submission once at ingress, deduplicates the resulting canonical value by producer ID and producer sequence, assigns the session sequence, batches candidates for the Archiver, and multicasts only durably committed frames.
 
 The deployed process receives submissions at `/run/shift/sequencer.in.sock`, connects to the Archiver at `/run/shift/archiver.sock`, and publishes committed frames to `239.255.0.1:55000` on IPv4 loopback with TTL 1.
 
