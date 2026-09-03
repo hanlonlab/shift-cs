@@ -25,10 +25,10 @@ public sealed class UnixStreamSocketTests
             StartNewSessionCodec.Encode(new StartNewSession(Guid.NewGuid()), payload);
 
             byte[] firstFrame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-            FrameCodec.Encode(MessageType.StartNewSession, Guid.NewGuid(), 1, payload, firstFrame);
+            FrameCodec.Encode(MessageType.StartNewSession, 1, 1, 1, payload, firstFrame);
 
             byte[] secondFrame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-            FrameCodec.Encode(MessageType.StartNewSession, Guid.NewGuid(), 2, payload, secondFrame);
+            FrameCodec.Encode(MessageType.StartNewSession, 1, 2, 2, payload, secondFrame);
 
             byte[] batch = new byte[sizeof(uint) + firstFrame.Length + secondFrame.Length];
             BinaryPrimitives.WriteUInt32BigEndian(batch, 2);

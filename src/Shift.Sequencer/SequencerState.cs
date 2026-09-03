@@ -33,9 +33,14 @@ public readonly struct VerifiedSubmission
             throw new InvalidDataException("Submission sequence must be zero.");
         }
 
-        if (header.MessageId == Guid.Empty)
+        if (header.ProducerId == FrameCodec.ControlProducerId)
         {
-            throw new InvalidDataException("Submission message ID cannot be empty.");
+            throw new InvalidDataException("Submission producer ID cannot be zero.");
+        }
+
+        if (header.ProducerSequence == 0)
+        {
+            throw new InvalidDataException("Submission producer sequence cannot be zero.");
         }
 
         if (header.MessageType == MessageType.CommitThrough)
@@ -65,12 +70,14 @@ public sealed class SequencerState
 {
     public const int MaximumPendingBytes = 1024 * 1024;
 
-    private readonly Dictionary<Guid, Message> _messages = [];
-    private readonly Queue<Message> _pending = [];
+    private readonly Dictionary<ushort, ProducerState> _producers = [];
+    private readonly Queue<byte[]> _pending = [];
     private int _pendingBytes;
     private bool _ending;
     private bool _faulted;
     private bool _sessionActive;
+    private Guid _sessionId;
+    private byte[] _sessionStartFrame = [];
 
     public long LastAcceptedSequence { get; private set; }
 
@@ -85,53 +92,43 @@ public sealed class SequencerState
 
         FrameHeader header = submission.Header;
         ReadOnlySpan<byte> payload = submission.Payload;
-
-        if (_messages.TryGetValue(header.MessageId, out Message? existing))
-        {
-            FrameCodec.TryDecode(
-                existing.Frame,
-                out FrameHeader existingHeader,
-                out ReadOnlySpan<byte> existingPayload);
-            bool sameContent = header.MessageType == existingHeader.MessageType
-                && payload.SequenceEqual(existingPayload);
-            if (sameContent)
-            {
-                return existing.Committed
-                    ? new SubmissionResult(SubmissionStatus.CommittedDuplicate, existing.Frame, ForceCommit: false)
-                    : new SubmissionResult(
-                        SubmissionStatus.PendingDuplicate,
-                        ReadOnlyMemory<byte>.Empty,
-                        ForceCommit: false);
-            }
-
-            if (header.MessageType != MessageType.StartNewSession || _sessionActive)
-            {
-                _faulted = true;
-                throw new InvalidDataException("Message ID was reused with different content.");
-            }
-        }
-
         bool startsSession = header.MessageType == MessageType.StartNewSession;
         bool endsSession = header.MessageType == MessageType.EndCurrentSession;
-
+        StartNewSession startCommand = default;
         if (startsSession)
         {
-            if (!StartNewSessionCodec.TryDecode(payload, out StartNewSession command)
-                || command.SessionId == Guid.Empty)
+            if (!StartNewSessionCodec.TryDecode(payload, out startCommand)
+                || startCommand.SessionId == Guid.Empty)
             {
                 throw new InvalidDataException("StartNewSession requires a nonempty session ID.");
             }
-
-            if (_sessionActive)
-            {
-                throw new InvalidOperationException("A session is already active.");
-            }
         }
-        else
+
+        bool opensSession = startsSession && !_sessionActive;
+        if (opensSession && _sessionId != Guid.Empty && startCommand.SessionId == _sessionId)
         {
+            return new SubmissionResult(
+                SubmissionStatus.CommittedDuplicate,
+                _sessionStartFrame,
+                ForceCommit: false);
+        }
+
+        if (!opensSession)
+        {
+            SubmissionResult? duplicate = TryDuplicate(header, payload);
+            if (duplicate is not null)
+            {
+                return duplicate.Value;
+            }
+
             if (!_sessionActive)
             {
                 throw new InvalidOperationException("A session is not active.");
+            }
+
+            if (startsSession)
+            {
+                throw new InvalidOperationException("A session is already active.");
             }
 
             if (_ending)
@@ -145,6 +142,8 @@ public sealed class SequencerState
             }
         }
 
+        ValidateProducerSequence(header.ProducerId, header.ProducerSequence, opensSession);
+
         if (_pendingBytes > MaximumPendingBytes - submission.Frame.Length)
         {
             return new SubmissionResult(
@@ -153,19 +152,37 @@ public sealed class SequencerState
                 ForceCommit: false);
         }
 
-        long sequenceId = startsSession ? 1 : checked(LastAcceptedSequence + 1);
+        long sequenceId = opensSession ? 1 : checked(LastAcceptedSequence + 1);
         byte[] frame = new byte[submission.Frame.Length];
-        FrameCodec.Encode(header.MessageType, header.MessageId, sequenceId, payload, frame);
+        FrameCodec.Encode(
+            header.MessageType,
+            header.ProducerId,
+            header.ProducerSequence,
+            sequenceId,
+            payload,
+            frame);
 
-        if (startsSession)
+        ulong lastCommitted = 0;
+        if (opensSession)
         {
-            _messages.Clear();
+            _producers.Clear();
             _sessionActive = true;
+            _sessionId = startCommand.SessionId;
+            _sessionStartFrame = frame;
+        }
+        else if (_producers.TryGetValue(header.ProducerId, out ProducerState? prior))
+        {
+            lastCommitted = prior.LastCommittedProducerSequence;
         }
 
-        Message message = new(frame);
-        _messages.Add(header.MessageId, message);
-        _pending.Enqueue(message);
+        _producers[header.ProducerId] = new ProducerState
+        {
+            LastAcceptedProducerSequence = header.ProducerSequence,
+            LastCommittedProducerSequence = lastCommitted,
+            LastAcceptedFrame = frame,
+            LastAcceptedCommitted = false,
+        };
+        _pending.Enqueue(frame);
         LastAcceptedSequence = sequenceId;
         _pendingBytes += frame.Length;
 
@@ -190,10 +207,17 @@ public sealed class SequencerState
             throw new InvalidDataException("CommitThrough must match the current pending high-water sequence.");
         }
 
-        while (_pending.TryDequeue(out Message? message))
+        while (_pending.TryDequeue(out byte[]? frame))
         {
-            message.Committed = true;
-            _pendingBytes -= message.Frame.Length;
+            FrameCodec.TryDecode(frame, out FrameHeader header, out _);
+            ProducerState producer = _producers[header.ProducerId];
+            producer.LastCommittedProducerSequence = header.ProducerSequence;
+            if (producer.LastAcceptedProducerSequence == header.ProducerSequence)
+            {
+                producer.LastAcceptedCommitted = true;
+            }
+
+            _pendingBytes -= frame.Length;
         }
 
         if (_ending)
@@ -201,6 +225,82 @@ public sealed class SequencerState
             _ending = false;
             _sessionActive = false;
         }
+    }
+
+    private void ValidateProducerSequence(ushort producerId, ulong producerSequence, bool opensSession)
+    {
+        if (!_producers.TryGetValue(producerId, out ProducerState? existing))
+        {
+            if (producerSequence != 1)
+            {
+                throw new InvalidDataException("A new producer must begin at producer sequence 1.");
+            }
+
+            return;
+        }
+
+        if (producerSequence == existing.LastAcceptedProducerSequence + 1)
+        {
+            return;
+        }
+
+        if (opensSession && producerSequence == 1)
+        {
+            return;
+        }
+
+        throw new InvalidDataException("Producer sequence must be contiguous.");
+    }
+
+    private SubmissionResult? TryDuplicate(FrameHeader header, ReadOnlySpan<byte> payload)
+    {
+        if (!_producers.TryGetValue(header.ProducerId, out ProducerState? existing))
+        {
+            return null;
+        }
+
+        if (header.ProducerSequence == existing.LastAcceptedProducerSequence)
+        {
+            if (existing.LastAcceptedFrame.Length != 0)
+            {
+                FrameCodec.TryDecode(
+                    existing.LastAcceptedFrame,
+                    out FrameHeader existingHeader,
+                    out ReadOnlySpan<byte> existingPayload);
+                bool sameContent = header.MessageType == existingHeader.MessageType
+                    && payload.SequenceEqual(existingPayload);
+                if (!sameContent)
+                {
+                    _faulted = true;
+                    throw new InvalidDataException("Producer sequence was reused with different content.");
+                }
+            }
+
+            return existing.LastAcceptedCommitted
+                ? new SubmissionResult(
+                    SubmissionStatus.CommittedDuplicate,
+                    existing.LastAcceptedFrame,
+                    ForceCommit: false)
+                : new SubmissionResult(
+                    SubmissionStatus.PendingDuplicate,
+                    ReadOnlyMemory<byte>.Empty,
+                    ForceCommit: false);
+        }
+
+        if (header.ProducerSequence < existing.LastAcceptedProducerSequence)
+        {
+            return header.ProducerSequence <= existing.LastCommittedProducerSequence
+                ? new SubmissionResult(
+                    SubmissionStatus.CommittedDuplicate,
+                    ReadOnlyMemory<byte>.Empty,
+                    ForceCommit: false)
+                : new SubmissionResult(
+                    SubmissionStatus.PendingDuplicate,
+                    ReadOnlyMemory<byte>.Empty,
+                    ForceCommit: false);
+        }
+
+        return null;
     }
 
     private void ThrowIfFaulted()
@@ -211,10 +311,14 @@ public sealed class SequencerState
         }
     }
 
-    private sealed class Message(byte[] frame)
+    private sealed class ProducerState
     {
-        public byte[] Frame { get; } = frame;
+        public ulong LastAcceptedProducerSequence { get; set; }
 
-        public bool Committed { get; set; }
+        public ulong LastCommittedProducerSequence { get; set; }
+
+        public byte[] LastAcceptedFrame { get; set; } = [];
+
+        public bool LastAcceptedCommitted { get; set; }
     }
 }

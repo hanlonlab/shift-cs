@@ -4,7 +4,7 @@ Owns the single-host transports used between processes: shared AF_UNIX datagram 
 
 ## Submission ingress
 
-Producers send submissions to the Sequencer over AF_UNIX datagrams. Each datagram contains exactly one complete encoded frame and is limited to 2,048 bytes. The current 35 bytes of framing overhead leave up to 2,013 bytes for the payload.
+Producers send submissions to the Sequencer over AF_UNIX datagrams. Each datagram contains exactly one complete encoded frame and is limited to 2,048 bytes. The current 29 bytes of framing overhead leave up to 2,019 bytes for the payload.
 
 `Shift.Ipc` treats the frame as opaque bytes. Encoding and decoding belong to `Shift.Protocol`.
 

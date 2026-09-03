@@ -1,6 +1,6 @@
 # Shift.Sequencer.Tests
 
-This project verifies session ordering, lifecycle enforcement, message deduplication, durable-watermark validation, and the pending-byte cap.
+This project verifies session ordering, lifecycle enforcement, producer-sequence deduplication, durable-watermark validation, and the pending-byte cap.
 
 ## Belongs here
 

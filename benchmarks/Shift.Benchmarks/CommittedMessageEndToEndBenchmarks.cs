@@ -50,7 +50,8 @@ public class CommittedMessageEndToEndBenchmarks
     private Task _archiverTask = null!;
     private CancellationTokenSource _iterationCancellation = null!;
     private Task<int> _receiveTask = null!;
-    private Guid _messageId;
+    private ushort _producerId;
+    private ulong _producerSequence;
     private int _payloadLength;
     private int _submissionLength;
     private long _expectedSequenceId;
@@ -121,10 +122,12 @@ public class CommittedMessageEndToEndBenchmarks
         }
 
         _expectedSequenceId = Message == MessageType.StartNewSession ? 1 : 2;
-        _messageId = Guid.NewGuid();
+        _producerId = 1;
+        _producerSequence = Message == MessageType.StartNewSession ? 1uL : 2uL;
         _submissionLength = FrameCodec.Encode(
             Message,
-            _messageId,
+            _producerId,
+            _producerSequence,
             0,
             _payload.AsSpan(0, _payloadLength),
             _submission);
@@ -169,12 +172,14 @@ public class CommittedMessageEndToEndBenchmarks
         ValidateFrame(
             _receivedLength,
             Message,
-            _messageId,
+            _producerId,
+            _producerSequence,
             _expectedSequenceId,
             _payload.AsSpan(0, _payloadLength));
         ReceiveAndValidateFrame(
             MessageType.CommitThrough,
-            Guid.Empty,
+            FrameCodec.ControlProducerId,
+            0,
             _expectedSequenceId,
             ReadOnlySpan<byte>.Empty);
 
@@ -214,7 +219,8 @@ public class CommittedMessageEndToEndBenchmarks
 
     private void ReceiveAndValidateFrame(
         MessageType messageType,
-        Guid messageId,
+        ushort producerId,
+        ulong producerSequence,
         long sequenceId,
         ReadOnlySpan<byte> expectedPayload)
     {
@@ -224,7 +230,8 @@ public class CommittedMessageEndToEndBenchmarks
         ValidateFrame(
             frameLength,
             messageType,
-            messageId,
+            producerId,
+            producerSequence,
             sequenceId,
             expectedPayload);
     }
@@ -235,10 +242,10 @@ public class CommittedMessageEndToEndBenchmarks
         int payloadLength = StartNewSessionCodec.Encode(
             new StartNewSession(Guid.NewGuid()),
             payload);
-        var messageId = Guid.NewGuid();
         int frameLength = FrameCodec.Encode(
             MessageType.StartNewSession,
-            messageId,
+            1,
+            1,
             0,
             payload[..payloadLength],
             _lifecycleSubmission);
@@ -248,22 +255,24 @@ public class CommittedMessageEndToEndBenchmarks
             _shutdown.Token).AsTask().GetAwaiter().GetResult();
         ReceiveAndValidateFrame(
             MessageType.StartNewSession,
-            messageId,
+            1,
+            1,
             1,
             payload[..payloadLength]);
         ReceiveAndValidateFrame(
             MessageType.CommitThrough,
-            Guid.Empty,
+            FrameCodec.ControlProducerId,
+            0,
             1,
             ReadOnlySpan<byte>.Empty);
     }
 
     private void EndSession(long sequenceId)
     {
-        var messageId = Guid.NewGuid();
         int frameLength = FrameCodec.Encode(
             MessageType.EndCurrentSession,
-            messageId,
+            1,
+            2,
             0,
             ReadOnlySpan<byte>.Empty,
             _lifecycleSubmission);
@@ -273,12 +282,14 @@ public class CommittedMessageEndToEndBenchmarks
             _shutdown.Token).AsTask().GetAwaiter().GetResult();
         ReceiveAndValidateFrame(
             MessageType.EndCurrentSession,
-            messageId,
+            1,
+            2,
             sequenceId,
             ReadOnlySpan<byte>.Empty);
         ReceiveAndValidateFrame(
             MessageType.CommitThrough,
-            Guid.Empty,
+            FrameCodec.ControlProducerId,
+            0,
             sequenceId,
             ReadOnlySpan<byte>.Empty);
     }
@@ -286,7 +297,8 @@ public class CommittedMessageEndToEndBenchmarks
     private void ValidateFrame(
         int frameLength,
         MessageType messageType,
-        Guid messageId,
+        ushort producerId,
+        ulong producerSequence,
         long sequenceId,
         ReadOnlySpan<byte> expectedPayload)
     {
@@ -296,7 +308,8 @@ public class CommittedMessageEndToEndBenchmarks
             out ReadOnlySpan<byte> payload);
         if (status != OperationStatus.Done
             || header.MessageType != messageType
-            || header.MessageId != messageId
+            || header.ProducerId != producerId
+            || header.ProducerSequence != producerSequence
             || header.SequenceId != sequenceId
             || !payload.SequenceEqual(expectedPayload))
         {

@@ -13,6 +13,8 @@ namespace Shift.IntegrationTests;
 
 public sealed class SequencerLivePathTests
 {
+    private const ushort ProducerId = 1;
+
     [Fact]
     public async Task QuietBatchCommitsAndNextSessionRestartsAtOneInANewLog()
     {
@@ -53,7 +55,7 @@ public sealed class SequencerLivePathTests
             {
                 Guid firstSessionId = new("00112233-4455-6677-8899-aabbccddeeff");
                 await submissions.SendAsync(
-                    EncodeStart(firstSessionId, new Guid("10213243-5465-7687-98a9-bacbdcedfe0f")),
+                    EncodeStart(ProducerId, 1, firstSessionId),
                     timeout.Token);
 
                 FrameHeader firstStart = await ReceiveAsync(committed, timeout.Token);
@@ -63,16 +65,10 @@ public sealed class SequencerLivePathTests
                 AssertCommit(firstStartCommit, 1);
 
                 await submissions.SendAsync(
-                    EncodeSubmission(
-                        MessageType.PlaceOrder,
-                        new Guid("20314253-6475-8697-a8b9-cadbecfd0e1f"),
-                        [0x01]),
+                    EncodeSubmission(MessageType.PlaceOrder, ProducerId, 2, [0x01]),
                     timeout.Token);
                 await submissions.SendAsync(
-                    EncodeSubmission(
-                        MessageType.EndCurrentSession,
-                        new Guid("30415263-7485-96a7-b8c9-daebfc0d1e2f"),
-                        []),
+                    EncodeSubmission(MessageType.EndCurrentSession, ProducerId, 3, []),
                     timeout.Token);
 
                 FrameHeader order = await ReceiveAsync(committed, timeout.Token);
@@ -86,7 +82,7 @@ public sealed class SequencerLivePathTests
 
                 Guid secondSessionId = new("40516273-8495-a6b7-c8d9-eafb0c1d2e3f");
                 await submissions.SendAsync(
-                    EncodeStart(secondSessionId, new Guid("50617283-94a5-b6c7-d8e9-fa0b1c2d3e4f")),
+                    EncodeStart(ProducerId, 1, secondSessionId),
                     timeout.Token);
 
                 FrameHeader secondStart = await ReceiveAsync(committed, timeout.Token);
@@ -145,7 +141,8 @@ public sealed class SequencerLivePathTests
             {
                 await submissions.SendAsync(
                     EncodeStart(
-                        new Guid("50617283-94a5-b6c7-d8e9-fa0b1c2d3e4f"),
+                        ProducerId,
+                        1,
                         new Guid("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f")),
                     timeout.Token);
 
@@ -157,7 +154,8 @@ public sealed class SequencerLivePathTests
                 byte[] wrongAcknowledgement = new byte[FrameCodec.MinimumFrameSize];
                 FrameCodec.Encode(
                     MessageType.CommitThrough,
-                    Guid.Empty,
+                    FrameCodec.ControlProducerId,
+                    0,
                     2,
                     ReadOnlySpan<byte>.Empty,
                     wrongAcknowledgement);
@@ -198,7 +196,8 @@ public sealed class SequencerLivePathTests
     private static void AssertCommit(FrameHeader header, long sequenceId)
     {
         Assert.Equal(MessageType.CommitThrough, header.MessageType);
-        Assert.Equal(Guid.Empty, header.MessageId);
+        Assert.Equal(FrameCodec.ControlProducerId, header.ProducerId);
+        Assert.Equal(0uL, header.ProducerSequence);
         Assert.Equal(sequenceId, header.SequenceId);
     }
 
@@ -249,20 +248,24 @@ public sealed class SequencerLivePathTests
         }
     }
 
-    private static byte[] EncodeStart(Guid sessionId, Guid messageId)
+    private static byte[] EncodeStart(
+        ushort producerId,
+        ulong producerSequence,
+        Guid sessionId)
     {
         byte[] payload = new byte[16];
         StartNewSessionCodec.Encode(new StartNewSession(sessionId), payload);
-        return EncodeSubmission(MessageType.StartNewSession, messageId, payload);
+        return EncodeSubmission(MessageType.StartNewSession, producerId, producerSequence, payload);
     }
 
     private static byte[] EncodeSubmission(
         MessageType messageType,
-        Guid messageId,
+        ushort producerId,
+        ulong producerSequence,
         ReadOnlySpan<byte> payload)
     {
         byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, messageId, 0, payload, frame);
+        FrameCodec.Encode(messageType, producerId, producerSequence, 0, payload, frame);
         return frame;
     }
 

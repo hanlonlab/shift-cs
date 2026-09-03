@@ -7,7 +7,7 @@ namespace Shift.Archiver.Tests;
 
 public sealed class SessionLogTests : IDisposable
 {
-    private static readonly Guid _messageId = new("00112233-4455-6677-8899-aabbccddeeff");
+    private const ushort ProducerId = 1;
     private static readonly byte[] _payload = [0xde, 0xad, 0xbe, 0xef];
     private static readonly byte[] _flushBoundaryThroughOne =
     [
@@ -158,10 +158,14 @@ public sealed class SessionLogTests : IDisposable
         Directory.Delete(_directory, recursive: true);
     }
 
-    private static byte[] EncodeFrame(long sequenceId, MessageType messageType = MessageType.PlaceOrder)
+    private static byte[] EncodeFrame(
+        long sequenceId,
+        MessageType messageType = MessageType.PlaceOrder,
+        byte[]? payload = null)
     {
-        byte[] frame = new byte[FrameCodec.MinimumFrameSize + _payload.Length];
-        FrameCodec.Encode(messageType, _messageId, sequenceId, _payload, frame);
+        payload ??= _payload;
+        byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
+        FrameCodec.Encode(messageType, ProducerId, (ulong)sequenceId, sequenceId, payload, frame);
         return frame;
     }
 }

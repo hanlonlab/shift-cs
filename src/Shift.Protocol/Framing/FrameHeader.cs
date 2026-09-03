@@ -23,6 +23,5 @@ public enum MessageType : ushort
     TradeExecuted = 7, // Match
 
     // Archiver & Control
-    CommitThrough = 8, // Archiver has durably synced through this sequence
-    RecoveredSession = 9 // Archiver handshake: restored session, high-water, and producer cursors
+    CommitThrough = 8 // Archiver has durably synced through this sequence
 }

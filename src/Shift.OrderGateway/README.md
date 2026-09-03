@@ -5,7 +5,7 @@ Owns the external TCP order-entry boundary. It translates validated client frame
 ## Belongs here
 
 - TCP client sessions, wire validation, and request correlation.
-- Submission delivery and internal gap recovery.
+- Submission delivery with a stable producer ID and monotonic producer sequence, plus internal gap recovery.
 
 ## Does not belong here
 

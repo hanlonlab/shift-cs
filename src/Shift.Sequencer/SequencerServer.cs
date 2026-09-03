@@ -102,7 +102,11 @@ public sealed class SequencerServer
                 throw new InvalidDataException("A committed submission has no durable watermark.");
             }
 
-            await _multicast.SendAsync(submission.Frame, cancellationToken);
+            if (!submission.Frame.IsEmpty)
+            {
+                await _multicast.SendAsync(submission.Frame, cancellationToken);
+            }
+
             await _multicast.SendAsync(_committedThroughFrame, cancellationToken);
             return;
         }
@@ -156,7 +160,8 @@ public sealed class SequencerServer
         long expectedSequence = _state.LastAcceptedSequence;
         if (status != OperationStatus.Done
             || header.MessageType != MessageType.CommitThrough
-            || header.MessageId != Guid.Empty
+            || header.ProducerId != FrameCodec.ControlProducerId
+            || header.ProducerSequence != 0
             || header.SequenceId != expectedSequence
             || !payload.IsEmpty)
         {

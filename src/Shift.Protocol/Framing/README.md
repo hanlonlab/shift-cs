@@ -11,12 +11,15 @@ All multibyte values use big-endian byte order. `FrameLength` includes the heade
 | 0 | 4 | Frame length |
 | 4 | 1 | Version |
 | 5 | 2 | Message type |
-| 7 | 16 | Message ID |
-| 23 | 8 | Session sequence |
-| 31 | variable | Payload |
+| 7 | 2 | Producer ID |
+| 9 | 8 | Producer sequence |
+| 17 | 8 | Session sequence |
+| 25 | variable | Payload |
 | `FrameLength - 4` | 4 | CRC-32C of every preceding frame byte |
 
-Payload length is `FrameLength - 35`.
+Payload length is `FrameLength - 29`. Minimum frame size is 29 bytes.
+
+Producer ID 0 is reserved for Archiver control frames. Submissions use a nonzero producer ID and a nonzero producer sequence. Session sequence 0 marks an unsequenced submission.
 
 Each encoded buffer contains exactly one frame. Trailing bytes are invalid.
 

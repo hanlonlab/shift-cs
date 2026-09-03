@@ -23,19 +23,19 @@ public class UnixDatagramFrameTests
         {
             StartNewSession command = new(
                 new Guid("00112233-4455-6677-8899-aabbccddeeff"));
-            Guid messageId = new("10213243-5465-7687-98a9-bacbdcedfe0f");
             byte[] encodedPayload = new byte[16];
             StartNewSessionCodec.Encode(command, encodedPayload);
 
             byte[] encodedFrame = new byte[FrameCodec.MinimumFrameSize + encodedPayload.Length];
             int frameLength = FrameCodec.Encode(
                 MessageType.StartNewSession,
-                messageId,
+                producerId: 1,
+                producerSequence: 1,
                 sequenceId: 0,
                 encodedPayload,
                 encodedFrame);
 
-            Assert.Equal(51, frameLength);
+            Assert.Equal(45, frameLength);
 
             using UnixDatagramReceiver receiver = new(socketPath);
             using UnixDatagramSender sender = new(socketPath);
@@ -57,7 +57,8 @@ public class UnixDatagramFrameTests
             Assert.Equal((uint)frameLength, header.FrameLength);
             Assert.Equal(FrameCodec.CurrentVersion, header.Version);
             Assert.Equal(MessageType.StartNewSession, header.MessageType);
-            Assert.Equal(messageId, header.MessageId);
+            Assert.Equal((ushort)1, header.ProducerId);
+            Assert.Equal(1uL, header.ProducerSequence);
             Assert.Equal(0, header.SequenceId);
             Assert.True(StartNewSessionCodec.TryDecode(receivedPayload, out StartNewSession receivedCommand));
             Assert.Equal(command, receivedCommand);

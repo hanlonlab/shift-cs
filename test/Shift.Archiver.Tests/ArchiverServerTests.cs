@@ -10,11 +10,11 @@ namespace Shift.Archiver.Tests;
 
 public sealed class ArchiverServerTests : IDisposable
 {
+    private const ushort FirstProducerId = 1;
+    private const ushort SecondProducerId = 2;
+    private const ushort ThirdProducerId = 3;
     private static readonly Guid _firstSessionId = new("00112233-4455-6677-8899-aabbccddeeff");
     private static readonly Guid _secondSessionId = new("10213243-5465-7687-98a9-bacbdcedfe0f");
-    private static readonly Guid _firstMessageId = new("20314253-6475-8697-a8b9-cadbecfd0e1f");
-    private static readonly Guid _secondMessageId = new("30415263-7485-96a7-b8c9-daebfc0d1e2f");
-    private static readonly Guid _thirdMessageId = new("40516273-8495-a6b7-c8d9-eafb0c1d2e3f");
 
     private readonly string _archiveRoot;
     private readonly string _directory;
@@ -40,17 +40,17 @@ public sealed class ArchiverServerTests : IDisposable
             TestContext.Current.CancellationToken);
         Task run = archiver.RunAsync(connection.Server, stop.Token);
 
-        byte[] firstStart = EncodeStart(_firstMessageId, _firstSessionId, 1);
+        byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
         await AssertAcknowledgementAsync(connection.Client, 1);
 
-        byte[] order = EncodeFrame(MessageType.PlaceOrder, _secondMessageId, 2, [0xde, 0xad]);
-        byte[] firstEnd = EncodeFrame(MessageType.EndCurrentSession, _thirdMessageId, 3, []);
+        byte[] order = EncodeFrame(MessageType.PlaceOrder, SecondProducerId, 1, 2, [0xde, 0xad]);
+        byte[] firstEnd = EncodeFrame(MessageType.EndCurrentSession, ThirdProducerId, 1, 3, []);
         await SendBatchAsync(connection.Client, order, firstEnd);
         await AssertAcknowledgementAsync(connection.Client, 3);
 
-        byte[] secondStart = EncodeStart(_secondMessageId, _secondSessionId, 1);
-        byte[] secondEnd = EncodeFrame(MessageType.EndCurrentSession, _thirdMessageId, 2, []);
+        byte[] secondStart = EncodeStart(SecondProducerId, 1, _secondSessionId, 1);
+        byte[] secondEnd = EncodeFrame(MessageType.EndCurrentSession, ThirdProducerId, 1, 2, []);
         await SendBatchAsync(connection.Client, secondStart, secondEnd);
         await AssertAcknowledgementAsync(connection.Client, 2);
 
@@ -77,7 +77,7 @@ public sealed class ArchiverServerTests : IDisposable
 
         await SendBatchAsync(
             connection.Client,
-            EncodeFrame(MessageType.PlaceOrder, _firstMessageId, 1, []));
+            EncodeFrame(MessageType.PlaceOrder, FirstProducerId, 1, 1, []));
 
         await Assert.ThrowsAsync<InvalidDataException>(() => run);
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
@@ -92,13 +92,13 @@ public sealed class ArchiverServerTests : IDisposable
         using ArchiverServer archiver = new(_archiveRoot);
         Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
 
-        byte[] firstStart = EncodeStart(_firstMessageId, _firstSessionId, 1);
+        byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
         await AssertAcknowledgementAsync(connection.Client, 1);
 
         await SendBatchAsync(
             connection.Client,
-            EncodeStart(_secondMessageId, _secondSessionId, 2));
+            EncodeStart(SecondProducerId, 1, _secondSessionId, 2));
 
         await Assert.ThrowsAsync<InvalidDataException>(() => run);
         AssertLog(Path.Combine(_archiveRoot, $"{_firstSessionId:N}.shiftlog"), [firstStart]);
@@ -116,10 +116,11 @@ public sealed class ArchiverServerTests : IDisposable
         using ArchiverServer archiver = new(_archiveRoot);
         Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
 
-        byte[] start = EncodeStart(_firstMessageId, _firstSessionId, 1);
+        byte[] start = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         byte[] end = EncodeFrame(
             MessageType.EndCurrentSession,
-            _secondMessageId,
+            SecondProducerId,
+            1,
             2,
             payloadNotEmpty ? [0x01] : []);
         byte[][] frames = payloadNotEmpty
@@ -127,7 +128,7 @@ public sealed class ArchiverServerTests : IDisposable
             : [
                 start,
                 end,
-                EncodeFrame(MessageType.PlaceOrder, _thirdMessageId, 3, []),
+                EncodeFrame(MessageType.PlaceOrder, ThirdProducerId, 1, 3, []),
             ];
 
         await SendBatchAsync(connection.Client, frames);
@@ -146,10 +147,10 @@ public sealed class ArchiverServerTests : IDisposable
         using Connection connection = await Connection.CreateAsync(_socketPath);
         using ArchiverServer archiver = new(_archiveRoot);
         Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
-        Guid messageId = emptyCandidateId ? Guid.Empty : _firstMessageId;
+        ushort producerId = emptyCandidateId ? FrameCodec.ControlProducerId : FirstProducerId;
         Guid sessionId = emptyCandidateId ? _firstSessionId : Guid.Empty;
 
-        await SendBatchAsync(connection.Client, EncodeStart(messageId, sessionId, 1));
+        await SendBatchAsync(connection.Client, EncodeStart(producerId, 1, sessionId, 1));
 
         await Assert.ThrowsAsync<InvalidDataException>(() => run);
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
@@ -222,21 +223,22 @@ public sealed class ArchiverServerTests : IDisposable
             "AF_UNIX tests require macOS or Linux.");
     }
 
-    private static byte[] EncodeStart(Guid messageId, Guid sessionId, long sequenceId)
+    private static byte[] EncodeStart(ushort producerId, ulong producerSequence, Guid sessionId, long sequenceId)
     {
         byte[] payload = new byte[16];
         StartNewSessionCodec.Encode(new StartNewSession(sessionId), payload);
-        return EncodeFrame(MessageType.StartNewSession, messageId, sequenceId, payload);
+        return EncodeFrame(MessageType.StartNewSession, producerId, producerSequence, sequenceId, payload);
     }
 
     private static byte[] EncodeFrame(
         MessageType messageType,
-        Guid messageId,
+        ushort producerId,
+        ulong producerSequence,
         long sequenceId,
         byte[] payload)
     {
         byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, messageId, sequenceId, payload, frame);
+        FrameCodec.Encode(messageType, producerId, producerSequence, sequenceId, payload, frame);
         return frame;
     }
 
@@ -266,7 +268,8 @@ public sealed class ArchiverServerTests : IDisposable
                 out FrameHeader header,
                 out ReadOnlySpan<byte> payload));
         Assert.Equal(MessageType.CommitThrough, header.MessageType);
-        Assert.Equal(Guid.Empty, header.MessageId);
+        Assert.Equal(FrameCodec.ControlProducerId, header.ProducerId);
+        Assert.Equal(0uL, header.ProducerSequence);
         Assert.Equal(sequenceId, header.SequenceId);
         Assert.True(payload.IsEmpty);
     }
