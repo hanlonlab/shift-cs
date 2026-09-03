@@ -190,6 +190,33 @@ public class SequencerStateTests
     }
 
     [Fact]
+    public void OlderPendingDuplicateBecomesCommittedWithBatch()
+    {
+        SequencerState state = new();
+        state.Submit(EncodeStart(FirstProducerId, 1, _firstSessionId));
+        state.CommitThrough(1);
+        VerifiedSubmission second = EncodeSubmission(
+            MessageType.PlaceOrder,
+            FirstProducerId,
+            2,
+            [0x01]);
+        state.Submit(second);
+        state.Submit(EncodeSubmission(
+            MessageType.PlaceOrder,
+            FirstProducerId,
+            3,
+            [0x02]));
+
+        Assert.Equal(SubmissionStatus.PendingDuplicate, state.Submit(second).Status);
+
+        state.CommitThrough(3);
+
+        SubmissionResult committed = state.Submit(second);
+        Assert.Equal(SubmissionStatus.CommittedDuplicate, committed.Status);
+        Assert.True(committed.Frame.IsEmpty);
+    }
+
+    [Fact]
     public void ConflictingDuplicateFaultsSequencer()
     {
         SequencerState state = new();

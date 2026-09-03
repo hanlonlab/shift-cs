@@ -35,10 +35,10 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(
             TestContext.Current.CancellationToken);
-        Task run = archiver.RunAsync(connection.Server, stop.Token);
+        Task run = archiver.RunAsync(stop.Token);
 
         byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
@@ -72,8 +72,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
 
         await SendBatchAsync(
             connection.Client,
@@ -89,8 +89,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
 
         byte[] firstStart = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         await SendBatchAsync(connection.Client, firstStart);
@@ -113,8 +113,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
 
         byte[] start = EncodeStart(FirstProducerId, 1, _firstSessionId, 1);
         byte[] end = EncodeFrame(
@@ -145,8 +145,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
         ushort producerId = emptyCandidateId ? FrameCodec.ControlProducerId : FirstProducerId;
         Guid sessionId = emptyCandidateId ? _firstSessionId : Guid.Empty;
 
@@ -162,8 +162,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
         byte[] prefixes = new byte[2 * sizeof(uint)];
         BinaryPrimitives.WriteUInt32BigEndian(prefixes, 1);
         BinaryPrimitives.WriteUInt32BigEndian(prefixes.AsSpan(sizeof(uint)), 2_049);
@@ -180,8 +180,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
         byte[] count = new byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32BigEndian(count, uint.MaxValue);
 
@@ -197,8 +197,8 @@ public sealed class ArchiverServerTests : IDisposable
         AssertUnixSockets();
 
         using Connection connection = await Connection.CreateAsync(_socketPath);
-        using ArchiverServer archiver = new(_archiveRoot);
-        Task run = archiver.RunAsync(connection.Server, TestContext.Current.CancellationToken);
+        using ArchiverServer archiver = new(_archiveRoot, connection.Server);
+        Task run = archiver.RunAsync(TestContext.Current.CancellationToken);
         byte[] maximumFrame = new byte[UnixDatagramReceiver.MaximumDatagramSize];
         BinaryPrimitives.WriteUInt32BigEndian(
             maximumFrame,
@@ -349,7 +349,6 @@ public sealed class ArchiverServerTests : IDisposable
 
         public void Dispose()
         {
-            Server.Dispose();
             Client.Dispose();
             _listener.Dispose();
         }

@@ -46,9 +46,10 @@ public sealed class SequencerLivePathTests
                 archiverConnection,
                 multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
-            using UnixStreamSocket stream = await listener.AcceptAsync(timeout.Token);
-            using ArchiverServer archiver = new(archiveRoot);
-            Task archiverTask = archiver.RunAsync(stream, timeout.Token);
+            using ArchiverServer archiver = new(
+                archiveRoot,
+                await listener.AcceptAsync(timeout.Token));
+            Task archiverTask = archiver.RunAsync(timeout.Token);
             using UnixDatagramSender submissions = new(submissionPath);
 
             try

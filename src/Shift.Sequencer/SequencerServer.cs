@@ -5,29 +5,18 @@ using Shift.Protocol.Framing;
 
 namespace Shift.Sequencer;
 
-public sealed class SequencerServer
+public sealed class SequencerServer(
+    UnixDatagramReceiver submissions,
+    UnixStreamSocket archiver,
+    UdpMulticastSender multicast)
 {
     private static readonly TimeSpan _maximumBatchDelay = TimeSpan.FromMilliseconds(1);
 
     private readonly SequencerState _state = new();
-    private readonly UnixDatagramReceiver _submissions;
-    private readonly UnixStreamSocket _archiver;
-    private readonly UdpMulticastSender _multicast;
     private readonly List<ReadOnlyMemory<byte>> _pendingBatch = [];
-    private int _batchBytes;
     private CancellationTokenSource? _batchDeadline;
     private readonly byte[] _receiveBuffer = new byte[UnixDatagramReceiver.MaximumDatagramSize];
     private byte[]? _committedThroughFrame;
-
-    public SequencerServer(
-        UnixDatagramReceiver submissions,
-        UnixStreamSocket archiver,
-        UdpMulticastSender multicast)
-    {
-        _submissions = submissions;
-        _archiver = archiver;
-        _multicast = multicast;
-    }
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -35,20 +24,8 @@ public sealed class SequencerServer
         {
             while (true)
             {
-                int? frameLength = await ReceiveSubmissionAsync(cancellationToken);
-                if (frameLength is null)
-                {
-                    await ArchiveAndPublishBatchAsync(cancellationToken);
-                    continue;
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                if (_batchDeadline?.IsCancellationRequested == true)
-                {
-                    await ArchiveAndPublishBatchAsync(cancellationToken);
-                }
-
-                await HandleSubmissionAsync(frameLength.Value, cancellationToken);
+                VerifiedSubmission submission = await ReceiveNextSubmissionAsync(cancellationToken);
+                await HandleSubmissionAsync(submission, cancellationToken);
             }
         }
         finally
@@ -57,67 +34,60 @@ public sealed class SequencerServer
         }
     }
 
-    private async ValueTask<int?> ReceiveSubmissionAsync(
+    private async ValueTask<VerifiedSubmission> ReceiveNextSubmissionAsync(
         CancellationToken cancellationToken)
     {
-        try
+        while (true)
         {
-            return await _submissions.ReceiveAsync(
-                _receiveBuffer,
-                _batchDeadline?.Token ?? cancellationToken);
-        }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested && _pendingBatch.Count != 0)
-        {
-            return null;
+            int frameLength;
+            try
+            {
+                frameLength = await submissions.ReceiveAsync(
+                    _receiveBuffer,
+                    _batchDeadline?.Token ?? cancellationToken);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested && _pendingBatch.Count != 0)
+            {
+                await ArchiveAndPublishBatchAsync(cancellationToken);
+                continue;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_batchDeadline?.IsCancellationRequested == true)
+            {
+                await ArchiveAndPublishBatchAsync(cancellationToken);
+            }
+
+            return VerifiedSubmission.Verify(_receiveBuffer.AsMemory(0, frameLength));
         }
     }
 
     private async Task HandleSubmissionAsync(
-        int frameLength,
+        VerifiedSubmission verified,
         CancellationToken cancellationToken)
     {
-        var verified = VerifiedSubmission.Verify(
-            _receiveBuffer.AsMemory(0, frameLength));
         SubmissionResult submission = _state.Submit(verified);
         if (submission.Status == SubmissionStatus.BatchFull)
         {
             await ArchiveAndPublishBatchAsync(cancellationToken);
             submission = _state.Submit(verified);
-            if (submission.Status == SubmissionStatus.BatchFull)
-            {
+        }
+
+        switch (submission.Status)
+        {
+            case SubmissionStatus.PendingDuplicate:
+                return;
+            case SubmissionStatus.CommittedDuplicate:
+                await PublishCommittedDuplicateAsync(submission.Frame, cancellationToken);
+                return;
+            case SubmissionStatus.BatchFull:
                 throw new InvalidDataException("A submission cannot fit in an empty batch.");
-            }
-        }
-
-        if (submission.Status == SubmissionStatus.PendingDuplicate)
-        {
-            return;
-        }
-
-        if (submission.Status == SubmissionStatus.CommittedDuplicate)
-        {
-            if (_committedThroughFrame is null)
-            {
-                throw new InvalidDataException("A committed submission has no durable watermark.");
-            }
-
-            if (!submission.Frame.IsEmpty)
-            {
-                await _multicast.SendAsync(submission.Frame, cancellationToken);
-            }
-
-            await _multicast.SendAsync(_committedThroughFrame, cancellationToken);
-            return;
-        }
-
-        _pendingBatch.Add(submission.Frame);
-        _batchBytes += submission.Frame.Length;
-
-        if (_pendingBatch.Count == 1)
-        {
-            _batchDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _batchDeadline.CancelAfter(_maximumBatchDelay);
+            case SubmissionStatus.Accepted:
+                AddAcceptedSubmissionToBatch(submission.Frame, cancellationToken);
+                break;
+            default:
+                throw new InvalidDataException("The Sequencer returned an invalid submission status.");
         }
 
         if (submission.ForceCommit)
@@ -126,9 +96,60 @@ public sealed class SequencerServer
         }
     }
 
+    private async Task PublishCommittedDuplicateAsync(
+        ReadOnlyMemory<byte> frame,
+        CancellationToken cancellationToken)
+    {
+        if (_committedThroughFrame is null)
+        {
+            throw new InvalidDataException("A committed submission has no durable watermark.");
+        }
+
+        if (!frame.IsEmpty)
+        {
+            await multicast.SendAsync(frame, cancellationToken);
+        }
+
+        await multicast.SendAsync(_committedThroughFrame, cancellationToken);
+    }
+
+    private void AddAcceptedSubmissionToBatch(
+        ReadOnlyMemory<byte> frame,
+        CancellationToken cancellationToken)
+    {
+        _pendingBatch.Add(frame);
+
+        if (_pendingBatch.Count == 1)
+        {
+            _batchDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _batchDeadline.CancelAfter(_maximumBatchDelay);
+        }
+    }
+
     private async Task ArchiveAndPublishBatchAsync(CancellationToken cancellationToken)
     {
-        byte[] request = new byte[sizeof(uint) + _batchBytes];
+        long expectedSequence = _state.LastAcceptedSequence;
+        await archiver.SendExactlyAsync(EncodePendingBatch(), cancellationToken);
+        byte[] durableWatermark = await ReceiveDurableWatermarkAsync(
+            expectedSequence,
+            cancellationToken);
+
+        _state.CommitThrough(expectedSequence);
+        foreach (ReadOnlyMemory<byte> frame in _pendingBatch)
+        {
+            await multicast.SendAsync(frame, cancellationToken);
+        }
+
+        await multicast.SendAsync(durableWatermark, cancellationToken);
+        _committedThroughFrame = durableWatermark;
+        _pendingBatch.Clear();
+        _batchDeadline!.Dispose();
+        _batchDeadline = null;
+    }
+
+    private byte[] EncodePendingBatch()
+    {
+        byte[] request = new byte[sizeof(uint) + _state.PendingBytes];
         BinaryPrimitives.WriteUInt32BigEndian(request, checked((uint)_pendingBatch.Count));
 
         int offset = sizeof(uint);
@@ -138,47 +159,37 @@ public sealed class SequencerServer
             offset += frame.Length;
         }
 
-        await _archiver.SendExactlyAsync(request, cancellationToken);
+        return request;
+    }
 
-        byte[] lengthPrefix = new byte[sizeof(uint)];
-        await _archiver.ReceiveExactlyAsync(lengthPrefix, cancellationToken);
-        uint encodedLength = BinaryPrimitives.ReadUInt32BigEndian(lengthPrefix);
-        if (encodedLength is < FrameCodec.MinimumFrameSize
-            or > UnixDatagramReceiver.MaximumDatagramSize)
+    private async Task<byte[]> ReceiveDurableWatermarkAsync(
+        long expectedSequence,
+        CancellationToken cancellationToken)
+    {
+        byte[] durableWatermark = new byte[FrameCodec.MinimumFrameSize];
+        await archiver.ReceiveExactlyAsync(
+            durableWatermark.AsMemory(0, sizeof(uint)),
+            cancellationToken);
+        if (BinaryPrimitives.ReadUInt32BigEndian(durableWatermark) != FrameCodec.MinimumFrameSize)
         {
             throw new InvalidDataException("The Archiver returned an invalid durable watermark length.");
         }
 
-        byte[] durableWatermark = new byte[encodedLength];
-        lengthPrefix.CopyTo(durableWatermark, 0);
-        await _archiver.ReceiveExactlyAsync(durableWatermark.AsMemory(sizeof(uint)), cancellationToken);
+        await archiver.ReceiveExactlyAsync(durableWatermark.AsMemory(sizeof(uint)), cancellationToken);
 
         OperationStatus status = FrameCodec.TryDecode(
             durableWatermark,
             out FrameHeader header,
-            out ReadOnlySpan<byte> payload);
-        long expectedSequence = _state.LastAcceptedSequence;
+            out _);
         if (status != OperationStatus.Done
             || header.MessageType != MessageType.CommitThrough
             || header.ProducerId != FrameCodec.ControlProducerId
             || header.ProducerSequence != 0
-            || header.SequenceId != expectedSequence
-            || !payload.IsEmpty)
+            || header.SequenceId != expectedSequence)
         {
             throw new InvalidDataException("The Archiver returned an invalid durable watermark.");
         }
 
-        _state.CommitThrough(expectedSequence);
-        foreach (ReadOnlyMemory<byte> frame in _pendingBatch)
-        {
-            await _multicast.SendAsync(frame, cancellationToken);
-        }
-
-        await _multicast.SendAsync(durableWatermark, cancellationToken);
-        _committedThroughFrame = durableWatermark;
-        _pendingBatch.Clear();
-        _batchBytes = 0;
-        _batchDeadline!.Dispose();
-        _batchDeadline = null;
+        return durableWatermark;
     }
 }
