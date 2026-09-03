@@ -44,9 +44,22 @@ public class SessionCommandCodecTests
     }
 
     [Fact]
-    public void EndCurrentSessionAcceptsOnlyEmptyPayload()
+    public void EndCurrentSessionRoundTrips()
     {
-        Assert.True(EndCurrentSessionCodec.IsValidPayload([]));
-        Assert.False(EndCurrentSessionCodec.IsValidPayload([0x00]));
+        var command = new EndCurrentSession();
+        byte[] payload = [];
+
+        int bytesWritten = EndCurrentSessionCodec.Encode(command, payload);
+
+        Assert.Equal(0, bytesWritten);
+        Assert.True(EndCurrentSessionCodec.TryDecode(payload, out EndCurrentSession decoded));
+        Assert.Equal(command, decoded);
+    }
+
+    [Fact]
+    public void EndCurrentSessionDecodeRejectsPayload()
+    {
+        Assert.False(EndCurrentSessionCodec.TryDecode([0x00], out EndCurrentSession command));
+        Assert.Equal(default, command);
     }
 }

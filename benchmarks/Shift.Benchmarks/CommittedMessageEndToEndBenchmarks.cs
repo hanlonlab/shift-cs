@@ -111,7 +111,9 @@ public class CommittedMessageEndToEndBenchmarks
                     _payload);
                 break;
             case MessageType.EndCurrentSession:
-                _payloadLength = 0;
+                _payloadLength = EndCurrentSessionCodec.Encode(
+                    new EndCurrentSession(),
+                    _payload);
                 break;
             default:
                 throw new NotSupportedException($"No end-to-end fixture exists for {Message}.");
@@ -270,12 +272,15 @@ public class CommittedMessageEndToEndBenchmarks
 
     private void EndSession(long sequenceId)
     {
+        int payloadLength = EndCurrentSessionCodec.Encode(
+            new EndCurrentSession(),
+            _lifecycleSubmission);
         int frameLength = FrameCodec.Encode(
             MessageType.EndCurrentSession,
             1,
             2,
             0,
-            ReadOnlySpan<byte>.Empty,
+            _lifecycleSubmission.AsSpan(0, payloadLength),
             _lifecycleSubmission);
 
         _submissions.SendAsync(
@@ -286,7 +291,7 @@ public class CommittedMessageEndToEndBenchmarks
             1,
             2,
             sequenceId,
-            ReadOnlySpan<byte>.Empty);
+            _lifecycleSubmission.AsSpan(0, payloadLength));
         ReceiveAndValidateFrame(
             MessageType.CommitThrough,
             FrameCodec.ControlProducerId,

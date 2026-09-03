@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
+using Shift.Protocol.Internal.Control;
 
 namespace Shift.Archiver;
 
@@ -24,7 +25,7 @@ public sealed class ArchiverServer(string archiveRoot) : IDisposable
                 prefix,
                 cancellationToken);
             long committedThrough = _archive.CommitBatch(frames);
-            CanonicalFrame acknowledgement = FrameCodec.EncodeCommitThrough(committedThrough);
+            CanonicalFrame acknowledgement = CommitThroughCodec.Encode(committedThrough);
             await sequencer.SendExactlyAsync(acknowledgement.Bytes, cancellationToken);
         }
     }

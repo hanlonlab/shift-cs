@@ -83,48 +83,6 @@ public class FrameRoleCodecTests
     }
 
     [Fact]
-    public void EncodeCommitThroughProducesCanonicalControlFrame()
-    {
-        CanonicalFrame frame = FrameCodec.EncodeCommitThrough(3);
-
-        Assert.Equal(FrameCodec.MinimumFrameSize, frame.Bytes.Length);
-        Assert.Equal(MessageType.CommitThrough, frame.Header.MessageType);
-        Assert.Equal(FrameCodec.ControlProducerId, frame.Header.ProducerId);
-        Assert.Equal(0UL, frame.Header.ProducerSequence);
-        Assert.Equal(3, frame.Header.SequenceId);
-        Assert.True(frame.Payload.IsEmpty);
-        Assert.Equal(frame.Bytes.ToArray(), FrameCodec.DecodeCommitThrough(frame.Bytes).Bytes.ToArray());
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void EncodeCommitThroughRejectsNonpositiveSequence(long sequenceId)
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.EncodeCommitThrough(sequenceId));
-    }
-
-    [Fact]
-    public void DecodeCommitThroughRejectsEveryIncorrectRoleField()
-    {
-        byte[][] invalidFrames =
-        [
-            Encode(MessageType.PlaceOrder, FrameCodec.ControlProducerId, 0, 1, []),
-            Encode(MessageType.CommitThrough, ProducerId, 0, 1, []),
-            Encode(MessageType.CommitThrough, FrameCodec.ControlProducerId, ProducerSequence, 1, []),
-            Encode(MessageType.CommitThrough, FrameCodec.ControlProducerId, 0, 0, []),
-            Encode(MessageType.CommitThrough, FrameCodec.ControlProducerId, 0, -1, []),
-            Encode(MessageType.CommitThrough, FrameCodec.ControlProducerId, 0, 1, [0x01]),
-        ];
-
-        foreach (byte[] frame in invalidFrames)
-        {
-            Assert.Throws<InvalidDataException>(() => FrameCodec.DecodeCommitThrough(frame));
-        }
-    }
-
-    [Fact]
     public void RoleDecodersRejectMalformedFrames()
     {
         byte[] submission = Encode(
@@ -143,12 +101,8 @@ public class FrameRoleCodecTests
             []);
         candidate[^1] ^= 0xff;
 
-        byte[] commit = FrameCodec.EncodeCommitThrough(1).Bytes.ToArray();
-        commit[^1] ^= 0xff;
-
         Assert.Throws<InvalidDataException>(() => FrameCodec.DecodeSubmission(submission));
         Assert.Throws<InvalidDataException>(() => FrameCodec.DecodeSequencedCandidate(candidate));
-        Assert.Throws<InvalidDataException>(() => FrameCodec.DecodeCommitThrough(commit));
     }
 
     private static byte[] Encode(

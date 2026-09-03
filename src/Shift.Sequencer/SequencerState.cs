@@ -118,7 +118,7 @@ public sealed class SequencerState
         }
 
         if (messageType == MessageType.EndCurrentSession
-            && !EndCurrentSessionCodec.IsValidPayload(payload))
+            && !EndCurrentSessionCodec.TryDecode(payload, out _))
         {
             throw new InvalidDataException("EndCurrentSession payload must be empty.");
         }

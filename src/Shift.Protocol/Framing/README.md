@@ -25,7 +25,7 @@ Each encoded buffer contains exactly one frame. Trailing bytes are invalid.
 
 Only defined message types are valid in version 1. Message type zero and undefined nonzero values are rejected during encoding and decoding.
 
-`FrameCodec` owns the role profiles for unsequenced submissions, sequenced candidates, and `CommitThrough` acknowledgments. A successful role-specific decode returns a `CanonicalFrame` containing the original bytes, decoded header, and payload slice so downstream components do not decode it again.
+`FrameCodec` owns the generic envelope plus the role profiles for unsequenced submissions and sequenced candidates. Message-specific profiles such as `CommitThrough` live with their message codec. A successful decode returns a `CanonicalFrame` containing the original bytes, decoded header, and payload slice so downstream components do not decode it again.
 
 ## Belongs here
 

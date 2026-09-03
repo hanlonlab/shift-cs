@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
+using Shift.Protocol.Internal.Control;
 
 namespace Shift.Sequencer;
 
@@ -167,7 +168,7 @@ public sealed class SequencerServer(
     {
         byte[] durableWatermark = new byte[FrameCodec.MinimumFrameSize];
         await archiver.ReceiveExactlyAsync(durableWatermark, cancellationToken);
-        CanonicalFrame acknowledgement = FrameCodec.DecodeCommitThrough(durableWatermark);
+        CanonicalFrame acknowledgement = CommitThroughCodec.Decode(durableWatermark);
         if (acknowledgement.Header.SequenceId != expectedSequence)
         {
             throw new InvalidDataException("The Archiver returned an invalid durable watermark.");

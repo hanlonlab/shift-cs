@@ -49,7 +49,7 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
 
             if (frame.Header.MessageType == MessageType.EndCurrentSession)
             {
-                if (!EndCurrentSessionCodec.IsValidPayload(frame.Payload.Span))
+                if (!EndCurrentSessionCodec.TryDecode(frame.Payload.Span, out _))
                 {
                     throw new InvalidDataException("EndCurrentSession payload must be empty.");
                 }

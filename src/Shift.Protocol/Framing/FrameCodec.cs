@@ -231,33 +231,7 @@ public static class FrameCodec
         return frame;
     }
 
-    public static CanonicalFrame DecodeCommitThrough(ReadOnlyMemory<byte> source)
-    {
-        CanonicalFrame frame = Decode(source);
-        FrameHeader header = frame.Header;
-        if (header.MessageType != MessageType.CommitThrough
-            || header.ProducerId != ControlProducerId
-            || header.ProducerSequence != 0
-            || header.SequenceId <= 0
-            || !frame.Payload.IsEmpty)
-        {
-            throw new InvalidDataException("Frame is not a valid commit-through acknowledgement.");
-        }
-
-        return frame;
-    }
-
-    public static CanonicalFrame EncodeCommitThrough(long sequenceId)
-    {
-        if (sequenceId <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(sequenceId));
-        }
-
-        return Encode(MessageType.CommitThrough, ControlProducerId, 0, sequenceId, []);
-    }
-
-    private static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
+    internal static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
     {
         OperationStatus status = TryDecode(source.Span, out FrameHeader header, out _);
         if (status != OperationStatus.Done)

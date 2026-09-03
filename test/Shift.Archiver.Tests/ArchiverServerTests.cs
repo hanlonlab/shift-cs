@@ -3,6 +3,7 @@ using Shift.Ipc;
 using Shift.Protocol;
 using Shift.Protocol.Framing;
 using Shift.Protocol.Internal.Commands;
+using Shift.Protocol.Internal.Control;
 using Xunit;
 
 namespace Shift.Archiver.Tests;
@@ -372,7 +373,7 @@ public sealed class ArchiverServerTests : IDisposable
         byte[] acknowledgement = new byte[FrameCodec.MinimumFrameSize];
         await socket.ReceiveExactlyAsync(acknowledgement, TestContext.Current.CancellationToken);
 
-        CanonicalFrame commit = FrameCodec.DecodeCommitThrough(acknowledgement);
+        CanonicalFrame commit = CommitThroughCodec.Decode(acknowledgement);
         Assert.Equal(sequenceId, commit.Header.SequenceId);
     }
 

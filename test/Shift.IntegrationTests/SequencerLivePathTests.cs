@@ -6,6 +6,7 @@ using Shift.Archiver;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
 using Shift.Protocol.Internal.Commands;
+using Shift.Protocol.Internal.Control;
 using Shift.Sequencer;
 using Xunit;
 
@@ -274,13 +275,13 @@ public sealed class SequencerLivePathTests
         switch (invalidAcknowledgement)
         {
             case InvalidAcknowledgement.Length:
-                byte[] invalidLength = FrameCodec.EncodeCommitThrough(1).Bytes.ToArray();
+                byte[] invalidLength = CommitThroughCodec.Encode(1).Bytes.ToArray();
                 BinaryPrimitives.WriteUInt32BigEndian(
                     invalidLength,
                     FrameCodec.MinimumFrameSize - 1);
                 return invalidLength;
             case InvalidAcknowledgement.Checksum:
-                byte[] invalidChecksum = FrameCodec.EncodeCommitThrough(1).Bytes.ToArray();
+                byte[] invalidChecksum = CommitThroughCodec.Encode(1).Bytes.ToArray();
                 invalidChecksum[^1] ^= 0xff;
                 return invalidChecksum;
             case InvalidAcknowledgement.MessageType:
@@ -307,7 +308,7 @@ public sealed class SequencerLivePathTests
                     1,
                     [0x01]).Bytes.ToArray();
             case InvalidAcknowledgement.HighWater:
-                return FrameCodec.EncodeCommitThrough(2).Bytes.ToArray();
+                return CommitThroughCodec.Encode(2).Bytes.ToArray();
             default:
                 throw new ArgumentOutOfRangeException(nameof(invalidAcknowledgement));
         }
