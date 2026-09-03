@@ -4,6 +4,7 @@ public readonly record struct FrameHeader(
     uint FrameLength,
     byte Version,
     MessageType MessageType,
+    Guid SessionId,
     ushort ProducerId,
     ulong ProducerSequence,
     long SequenceId

@@ -7,6 +7,7 @@ namespace Shift.Archiver.Tests;
 
 public sealed class SessionLogTests : IDisposable
 {
+    private static readonly Guid _sessionId = new("00112233-4455-6677-8899-aabbccddeeff");
     private static readonly byte[] _payload = [0xde, 0xad, 0xbe, 0xef];
     private static readonly byte[] _flushBoundaryThroughOne =
     [
@@ -118,6 +119,7 @@ public sealed class SessionLogTests : IDisposable
     {
         return FrameCodec.Encode(
             MessageType.PlaceOrder,
+            _sessionId,
             1,
             (ulong)sequenceId,
             sequenceId,

@@ -27,14 +27,15 @@ public class UnixDatagramFrameTests
 
         try
         {
-            StartNewSession command = new(
-                new Guid("00112233-4455-6677-8899-aabbccddeeff"));
-            byte[] encodedPayload = new byte[16];
+            Guid sessionId = new("00112233-4455-6677-8899-aabbccddeeff");
+            StartNewSession command = new();
+            byte[] encodedPayload = [];
             StartNewSessionCodec.Encode(command, encodedPayload);
 
             byte[] encodedFrame = new byte[FrameCodec.MinimumFrameSize + encodedPayload.Length];
             int frameLength = FrameCodec.Encode(
                 MessageType.StartNewSession,
+                sessionId,
                 producerId: 1,
                 producerSequence: 1,
                 sequenceId: 0,
@@ -63,6 +64,7 @@ public class UnixDatagramFrameTests
             Assert.Equal((uint)frameLength, header.FrameLength);
             Assert.Equal(FrameCodec.CurrentVersion, header.Version);
             Assert.Equal(MessageType.StartNewSession, header.MessageType);
+            Assert.Equal(sessionId, header.SessionId);
             Assert.Equal((ushort)1, header.ProducerId);
             Assert.Equal(1uL, header.ProducerSequence);
             Assert.Equal(0, header.SequenceId);

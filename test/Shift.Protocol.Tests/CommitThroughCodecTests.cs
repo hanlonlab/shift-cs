@@ -8,14 +8,16 @@ public class CommitThroughCodecTests
 {
     private const ushort ProducerId = 1;
     private const ulong ProducerSequence = 2;
+    private static readonly Guid _sessionId = new("00112233-4455-6677-8899-aabbccddeeff");
 
     [Fact]
     public void EncodeProducesCanonicalControlFrame()
     {
-        CanonicalFrame frame = CommitThroughCodec.Encode(3);
+        CanonicalFrame frame = CommitThroughCodec.Encode(_sessionId, 3);
 
         Assert.Equal(FrameCodec.MinimumFrameSize, frame.Bytes.Length);
         Assert.Equal(MessageType.CommitThrough, frame.Header.MessageType);
+        Assert.Equal(_sessionId, frame.Header.SessionId);
         Assert.Equal(FrameCodec.ControlProducerId, frame.Header.ProducerId);
         Assert.Equal(0UL, frame.Header.ProducerSequence);
         Assert.Equal(3, frame.Header.SequenceId);
@@ -29,7 +31,7 @@ public class CommitThroughCodecTests
     public void EncodeRejectsNonpositiveSequence(long sequenceId)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            CommitThroughCodec.Encode(sequenceId));
+            CommitThroughCodec.Encode(_sessionId, sequenceId));
     }
 
     [Fact]
@@ -54,7 +56,7 @@ public class CommitThroughCodecTests
     [Fact]
     public void DecodeRejectsMalformedFrame()
     {
-        byte[] frame = CommitThroughCodec.Encode(1).Bytes.ToArray();
+        byte[] frame = CommitThroughCodec.Encode(_sessionId, 1).Bytes.ToArray();
         frame[^1] ^= 0xff;
 
         Assert.Throws<InvalidDataException>(() => CommitThroughCodec.Decode(frame));
@@ -68,6 +70,7 @@ public class CommitThroughCodecTests
         ReadOnlySpan<byte> payload) =>
         FrameCodec.Encode(
             messageType,
+            _sessionId,
             producerId,
             producerSequence,
             sequenceId,

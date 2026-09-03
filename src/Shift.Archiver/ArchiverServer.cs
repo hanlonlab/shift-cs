@@ -25,7 +25,9 @@ public sealed class ArchiverServer(string archiveRoot) : IDisposable
                 prefix,
                 cancellationToken);
             long committedThrough = _archive.CommitBatch(frames);
-            CanonicalFrame acknowledgement = CommitThroughCodec.Encode(committedThrough);
+            CanonicalFrame acknowledgement = CommitThroughCodec.Encode(
+                frames[^1].Header.SessionId,
+                committedThrough);
             await sequencer.SendExactlyAsync(acknowledgement.Bytes, cancellationToken);
         }
     }

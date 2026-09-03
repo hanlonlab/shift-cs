@@ -6,13 +6,14 @@ namespace Shift.Archiver;
 internal sealed class SessionArchive(string archiveRoot) : IDisposable
 {
     private SessionLog? _sessionLog;
+    private Guid _sessionId;
     private long _highWater;
 
     public long CommitBatch(ReadOnlySpan<CanonicalFrame> frames)
     {
         bool sessionActive = _sessionLog is not null;
         long highWater = _highWater;
-        Guid sessionId = Guid.Empty;
+        Guid sessionId = _sessionId;
         bool endsSession = false;
 
         for (int index = 0; index < frames.Length; index++)
@@ -32,19 +33,24 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
                     throw new InvalidDataException("A session is already active.");
                 }
 
-                if (!StartNewSessionCodec.TryDecode(frame.Payload.Span, out StartNewSession command))
+                if (!StartNewSessionCodec.TryDecode(frame.Payload.Span, out _))
                 {
                     throw new InvalidDataException(
                         "An inactive Archiver batch must begin with a valid StartNewSession.");
                 }
 
-                sessionId = command.SessionId;
+                sessionId = frame.Header.SessionId;
                 sessionActive = true;
             }
             else if (!sessionActive)
             {
                 throw new InvalidDataException(
                     "An inactive Archiver batch must begin with StartNewSession.");
+            }
+
+            if (frame.Header.SessionId != sessionId)
+            {
+                throw new InvalidDataException("A frame does not belong to the current session.");
             }
 
             if (frame.Header.MessageType == MessageType.EndCurrentSession)
@@ -70,6 +76,7 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
         {
             string path = Path.Combine(archiveRoot, $"{sessionId:N}.shiftlog");
             _sessionLog = new SessionLog(path);
+            _sessionId = sessionId;
         }
 
         _sessionLog.CommitBatch(frames, highWater);
@@ -79,6 +86,7 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
         {
             _sessionLog.Dispose();
             _sessionLog = null;
+            _sessionId = Guid.Empty;
             _highWater = 0;
         }
 

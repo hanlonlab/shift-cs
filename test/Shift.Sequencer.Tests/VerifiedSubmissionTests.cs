@@ -1,5 +1,4 @@
 using Shift.Protocol.Framing;
-using Shift.Protocol.Internal.Commands;
 using Xunit;
 
 namespace Shift.Sequencer.Tests;
@@ -11,9 +10,13 @@ public class VerifiedSubmissionTests
     [Fact]
     public void AcceptsSubmissionDecodedByFrameCodec()
     {
-        byte[] payload = new byte[16];
-        StartNewSessionCodec.Encode(new StartNewSession(_sessionId), payload);
-        CanonicalFrame frame = FrameCodec.Encode(MessageType.StartNewSession, 1, 1, 0, payload);
+        CanonicalFrame frame = FrameCodec.Encode(
+            MessageType.StartNewSession,
+            _sessionId,
+            1,
+            1,
+            0,
+            []);
 
         VerifiedSubmission.Verify(frame.Bytes);
     }
@@ -21,22 +24,34 @@ public class VerifiedSubmissionTests
     [Fact]
     public void RejectsFramesOutsideTheSubmissionRole()
     {
-        byte[] payload = new byte[16];
-        StartNewSessionCodec.Encode(new StartNewSession(_sessionId), payload);
-        CanonicalFrame sequenced = FrameCodec.Encode(MessageType.StartNewSession, 1, 1, 1, payload);
-        CanonicalFrame commit = FrameCodec.Encode(MessageType.CommitThrough, 1, 1, 0, []);
+        CanonicalFrame sequenced = FrameCodec.Encode(
+            MessageType.StartNewSession,
+            _sessionId,
+            1,
+            1,
+            1,
+            []);
+        CanonicalFrame commit = FrameCodec.Encode(
+            MessageType.CommitThrough,
+            _sessionId,
+            1,
+            1,
+            0,
+            []);
         CanonicalFrame controlProducer = FrameCodec.Encode(
             MessageType.StartNewSession,
+            _sessionId,
             FrameCodec.ControlProducerId,
             1,
             0,
-            payload);
+            []);
         CanonicalFrame zeroProducerSequence = FrameCodec.Encode(
             MessageType.StartNewSession,
+            _sessionId,
             1,
             0,
             0,
-            payload);
+            []);
 
         Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(sequenced.Bytes));
         Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(commit.Bytes));
@@ -47,9 +62,13 @@ public class VerifiedSubmissionTests
     [Fact]
     public void RejectsMalformedFrame()
     {
-        byte[] payload = new byte[16];
-        StartNewSessionCodec.Encode(new StartNewSession(_sessionId), payload);
-        byte[] corrupt = FrameCodec.Encode(MessageType.StartNewSession, 1, 1, 0, payload).Bytes.ToArray();
+        byte[] corrupt = FrameCodec.Encode(
+            MessageType.StartNewSession,
+            _sessionId,
+            1,
+            1,
+            0,
+            []).Bytes.ToArray();
         corrupt[FrameCodec.HeaderSize] ^= 0xff;
 
         Assert.Throws<InvalidDataException>(() => VerifiedSubmission.Verify(corrupt));

@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using Shift.Protocol;
 using Shift.Protocol.Framing;
-using Shift.Protocol.Internal.Commands;
 using Xunit;
 
 namespace Shift.Archiver.Tests;
@@ -23,10 +22,18 @@ public sealed class SessionArchiveTests : IDisposable
     public void CommitsAndRotatesSessionLogs()
     {
         CanonicalFrame firstStart = EncodeStart(_firstSessionId, 1);
-        CanonicalFrame order = EncodeFrame(MessageType.PlaceOrder, 2);
-        CanonicalFrame firstEnd = EncodeFrame(MessageType.EndCurrentSession, 3, []);
+        CanonicalFrame order = EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 2);
+        CanonicalFrame firstEnd = EncodeFrame(
+            MessageType.EndCurrentSession,
+            _firstSessionId,
+            3,
+            []);
         CanonicalFrame secondStart = EncodeStart(_secondSessionId, 1);
-        CanonicalFrame secondEnd = EncodeFrame(MessageType.EndCurrentSession, 2, []);
+        CanonicalFrame secondEnd = EncodeFrame(
+            MessageType.EndCurrentSession,
+            _secondSessionId,
+            2,
+            []);
         using SessionArchive archive = new(_archiveRoot);
 
         Assert.Equal(1, archive.CommitBatch([firstStart]));
@@ -43,7 +50,7 @@ public sealed class SessionArchiveTests : IDisposable
         using SessionArchive archive = new(_archiveRoot);
 
         Assert.Throws<InvalidDataException>(() =>
-            archive.CommitBatch([EncodeFrame(MessageType.PlaceOrder, 1)]));
+            archive.CommitBatch([EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 1)]));
 
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
     }
@@ -53,6 +60,7 @@ public sealed class SessionArchiveTests : IDisposable
     {
         CanonicalFrame invalidStart = FrameCodec.Encode(
             MessageType.StartNewSession,
+            _firstSessionId,
             1,
             1,
             1,
@@ -90,9 +98,23 @@ public sealed class SessionArchiveTests : IDisposable
         Assert.Throws<InvalidDataException>(() =>
             archive.CommitBatch(
             [
-                EncodeFrame(MessageType.PlaceOrder, 2),
-                EncodeFrame(MessageType.PlaceOrder, 4),
+                EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 2),
+                EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 4),
             ]));
+
+        Assert.Equal(before, File.ReadAllBytes(LogPath(_firstSessionId)));
+    }
+
+    [Fact]
+    public void RejectsFrameFromAnotherSessionWithoutChangingOpenLog()
+    {
+        CanonicalFrame start = EncodeStart(_firstSessionId, 1);
+        using SessionArchive archive = new(_archiveRoot);
+        archive.CommitBatch([start]);
+        byte[] before = File.ReadAllBytes(LogPath(_firstSessionId));
+
+        Assert.Throws<InvalidDataException>(() =>
+            archive.CommitBatch([EncodeFrame(MessageType.PlaceOrder, _secondSessionId, 2)]));
 
         Assert.Equal(before, File.ReadAllBytes(LogPath(_firstSessionId)));
     }
@@ -105,11 +127,12 @@ public sealed class SessionArchiveTests : IDisposable
         CanonicalFrame start = EncodeStart(_firstSessionId, 1);
         CanonicalFrame end = EncodeFrame(
             MessageType.EndCurrentSession,
+            _firstSessionId,
             2,
             payloadNotEmpty ? [0x01] : []);
         CanonicalFrame[] frames = payloadNotEmpty
             ? [start, end]
-            : [start, end, EncodeFrame(MessageType.PlaceOrder, 3)];
+            : [start, end, EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 3)];
         using SessionArchive archive = new(_archiveRoot);
 
         Assert.Throws<InvalidDataException>(() => archive.CommitBatch(frames));
@@ -129,23 +152,24 @@ public sealed class SessionArchiveTests : IDisposable
 
     private static CanonicalFrame EncodeStart(Guid sessionId, long sequenceId)
     {
-        byte[] payload = new byte[16];
-        StartNewSessionCodec.Encode(new StartNewSession(sessionId), payload);
         return FrameCodec.Encode(
             MessageType.StartNewSession,
+            sessionId,
             1,
             (ulong)sequenceId,
             sequenceId,
-            payload);
+            []);
     }
 
     private static CanonicalFrame EncodeFrame(
         MessageType messageType,
+        Guid sessionId,
         long sequenceId,
         byte[]? payload = null)
     {
         return FrameCodec.Encode(
             messageType,
+            sessionId,
             1,
             (ulong)sequenceId,
             sequenceId,

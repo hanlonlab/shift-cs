@@ -8,6 +8,7 @@ public enum SubmissionStatus
     Accepted,
     PendingDuplicate,
     CommittedDuplicate,
+    SessionMismatch,
     BatchFull,
 }
 
@@ -33,6 +34,8 @@ public sealed class SequencerState
 
     internal int PendingBytes => _pendingBytes;
 
+    internal Guid SessionId => _sessionId;
+
     public SubmissionResult Submit(VerifiedSubmission submission)
     {
         ThrowIfFaulted();
@@ -44,9 +47,22 @@ public sealed class SequencerState
 
         FrameHeader header = submission.Frame.Header;
         ReadOnlySpan<byte> payload = submission.Frame.Payload.Span;
-        Guid sessionId = DecodeSessionId(header.MessageType, payload);
-        bool opensSession = sessionId != Guid.Empty && !_sessionActive;
-        if (opensSession && sessionId == _sessionId)
+        bool opensSession = header.MessageType == MessageType.StartNewSession && !_sessionActive;
+        if (!opensSession && header.SessionId != _sessionId)
+        {
+            return new SubmissionResult(
+                SubmissionStatus.SessionMismatch,
+                ReadOnlyMemory<byte>.Empty,
+                ForceCommit: false);
+        }
+
+        if (header.MessageType == MessageType.StartNewSession
+            && !StartNewSessionCodec.TryDecode(payload, out _))
+        {
+            throw new InvalidDataException("StartNewSession payload must be empty.");
+        }
+
+        if (opensSession && header.SessionId == _sessionId)
         {
             return new SubmissionResult(
                 SubmissionStatus.CommittedDuplicate,
@@ -75,27 +91,7 @@ public sealed class SequencerState
                 ForceCommit: false);
         }
 
-        return AcceptSubmission(
-            submission,
-            opensSession,
-            sessionId);
-    }
-
-    private static Guid DecodeSessionId(
-        MessageType messageType,
-        ReadOnlySpan<byte> payload)
-    {
-        if (messageType != MessageType.StartNewSession)
-        {
-            return Guid.Empty;
-        }
-
-        if (!StartNewSessionCodec.TryDecode(payload, out StartNewSession command))
-        {
-            throw new InvalidDataException("StartNewSession requires a nonempty session ID.");
-        }
-
-        return command.SessionId;
+        return AcceptSubmission(submission, opensSession);
     }
 
     private void ValidateSessionLifecycle(
@@ -126,8 +122,7 @@ public sealed class SequencerState
 
     private SubmissionResult AcceptSubmission(
         VerifiedSubmission submission,
-        bool opensSession,
-        Guid sessionId)
+        bool opensSession)
     {
         FrameHeader header = submission.Frame.Header;
         ReadOnlySpan<byte> payload = submission.Frame.Payload.Span;
@@ -135,6 +130,7 @@ public sealed class SequencerState
         long sequenceId = opensSession ? 1 : checked(LastAcceptedSequence + 1);
         CanonicalFrame frame = FrameCodec.Encode(
             header.MessageType,
+            header.SessionId,
             header.ProducerId,
             header.ProducerSequence,
             sequenceId,
@@ -144,7 +140,7 @@ public sealed class SequencerState
         {
             _producers.Clear();
             _sessionActive = true;
-            _sessionId = sessionId;
+            _sessionId = header.SessionId;
             _sessionStartFrame = frame.Bytes;
         }
 

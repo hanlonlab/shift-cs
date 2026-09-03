@@ -8,39 +8,21 @@ public class SessionCommandCodecTests
     [Fact]
     public void StartNewSessionRoundTrips()
     {
-        var command = new StartNewSession(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"));
-        byte[] payload = new byte[16];
+        var command = new StartNewSession();
+        byte[] payload = [];
 
         int bytesWritten = StartNewSessionCodec.Encode(command, payload);
 
-        Assert.Equal(payload.Length, bytesWritten);
+        Assert.Equal(0, bytesWritten);
         Assert.True(StartNewSessionCodec.TryDecode(payload, out StartNewSession decoded));
         Assert.Equal(command, decoded);
     }
 
     [Fact]
-    public void StartNewSessionEncodeRejectsEmptySessionId()
+    public void StartNewSessionDecodeRejectsPayload()
     {
-        byte[] payload = new byte[16];
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            StartNewSessionCodec.Encode(new StartNewSession(Guid.Empty), payload));
-    }
-
-    [Fact]
-    public void StartNewSessionDecodeRejectsEmptySessionId()
-    {
-        Assert.False(StartNewSessionCodec.TryDecode(new byte[16], out StartNewSession command));
+        Assert.False(StartNewSessionCodec.TryDecode([0x00], out StartNewSession command));
         Assert.Equal(default, command);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(15)]
-    [InlineData(17)]
-    public void StartNewSessionDecodeRejectsIncorrectPayloadLength(int length)
-    {
-        Assert.False(StartNewSessionCodec.TryDecode(new byte[length], out _));
     }
 
     [Fact]

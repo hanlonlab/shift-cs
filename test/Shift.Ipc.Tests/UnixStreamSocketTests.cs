@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using Shift.Protocol.Framing;
-using Shift.Protocol.Internal.Commands;
 using Xunit;
 
 namespace Shift.Ipc.Tests;
@@ -21,14 +20,13 @@ public sealed class UnixStreamSocketTests
 
         try
         {
-            byte[] payload = new byte[16];
-            StartNewSessionCodec.Encode(new StartNewSession(Guid.NewGuid()), payload);
+            var sessionId = Guid.NewGuid();
 
-            byte[] firstFrame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-            FrameCodec.Encode(MessageType.StartNewSession, 1, 1, 1, payload, firstFrame);
+            byte[] firstFrame = new byte[FrameCodec.MinimumFrameSize];
+            FrameCodec.Encode(MessageType.StartNewSession, sessionId, 1, 1, 1, [], firstFrame);
 
-            byte[] secondFrame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-            FrameCodec.Encode(MessageType.StartNewSession, 1, 2, 2, payload, secondFrame);
+            byte[] secondFrame = new byte[FrameCodec.MinimumFrameSize];
+            FrameCodec.Encode(MessageType.StartNewSession, sessionId, 1, 2, 2, [], secondFrame);
 
             byte[] batch = new byte[sizeof(uint) + firstFrame.Length + secondFrame.Length];
             BinaryPrimitives.WriteUInt32BigEndian(batch, 2);

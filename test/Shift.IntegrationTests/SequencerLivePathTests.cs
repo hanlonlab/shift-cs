@@ -5,7 +5,6 @@ using System.Net.Sockets;
 using Shift.Archiver;
 using Shift.Ipc;
 using Shift.Protocol.Framing;
-using Shift.Protocol.Internal.Commands;
 using Shift.Protocol.Internal.Control;
 using Shift.Sequencer;
 using Xunit;
@@ -62,24 +61,27 @@ public sealed class SequencerLivePathTests
                 FrameHeader firstStart = await ReceiveAsync(committed, timeout.Token);
                 FrameHeader firstStartCommit = await ReceiveAsync(committed, timeout.Token);
                 Assert.Equal(MessageType.StartNewSession, firstStart.MessageType);
+                Assert.Equal(firstSessionId, firstStart.SessionId);
                 Assert.Equal(1, firstStart.SequenceId);
-                AssertCommit(firstStartCommit, 1);
+                AssertCommit(firstStartCommit, firstSessionId, 1);
 
                 await submissions.SendAsync(
-                    EncodeSubmission(MessageType.PlaceOrder, ProducerId, 2, [0x01]),
+                    EncodeSubmission(MessageType.PlaceOrder, firstSessionId, ProducerId, 2, [0x01]),
                     timeout.Token);
                 await submissions.SendAsync(
-                    EncodeSubmission(MessageType.EndCurrentSession, ProducerId, 3, []),
+                    EncodeSubmission(MessageType.EndCurrentSession, firstSessionId, ProducerId, 3, []),
                     timeout.Token);
 
                 FrameHeader order = await ReceiveAsync(committed, timeout.Token);
                 FrameHeader firstEnd = await ReceiveAsync(committed, timeout.Token);
                 FrameHeader firstEndCommit = await ReceiveAsync(committed, timeout.Token);
                 Assert.Equal(MessageType.PlaceOrder, order.MessageType);
+                Assert.Equal(firstSessionId, order.SessionId);
                 Assert.Equal(2, order.SequenceId);
                 Assert.Equal(MessageType.EndCurrentSession, firstEnd.MessageType);
+                Assert.Equal(firstSessionId, firstEnd.SessionId);
                 Assert.Equal(3, firstEnd.SequenceId);
-                AssertCommit(firstEndCommit, 3);
+                AssertCommit(firstEndCommit, firstSessionId, 3);
 
                 Guid secondSessionId = new("40516273-8495-a6b7-c8d9-eafb0c1d2e3f");
                 await submissions.SendAsync(
@@ -89,8 +91,25 @@ public sealed class SequencerLivePathTests
                 FrameHeader secondStart = await ReceiveAsync(committed, timeout.Token);
                 FrameHeader secondStartCommit = await ReceiveAsync(committed, timeout.Token);
                 Assert.Equal(MessageType.StartNewSession, secondStart.MessageType);
+                Assert.Equal(secondSessionId, secondStart.SessionId);
                 Assert.Equal(1, secondStart.SequenceId);
-                AssertCommit(secondStartCommit, 1);
+                AssertCommit(secondStartCommit, secondSessionId, 1);
+
+                await submissions.SendAsync(
+                    EncodeSubmission(MessageType.PlaceOrder, firstSessionId, ProducerId, 2, [0x01]),
+                    timeout.Token);
+                await AssertNoMulticastAsync(committed, timeout.Token);
+
+                await submissions.SendAsync(
+                    EncodeSubmission(MessageType.EndCurrentSession, secondSessionId, ProducerId, 2, []),
+                    timeout.Token);
+
+                FrameHeader secondEnd = await ReceiveAsync(committed, timeout.Token);
+                FrameHeader secondEndCommit = await ReceiveAsync(committed, timeout.Token);
+                Assert.Equal(MessageType.EndCurrentSession, secondEnd.MessageType);
+                Assert.Equal(secondSessionId, secondEnd.SessionId);
+                Assert.Equal(2, secondEnd.SequenceId);
+                AssertCommit(secondEndCommit, secondSessionId, 2);
 
                 Assert.True(File.Exists(Path.Combine(archiveRoot, $"{firstSessionId:N}.shiftlog")));
                 Assert.True(File.Exists(Path.Combine(archiveRoot, $"{secondSessionId:N}.shiftlog")));
@@ -114,6 +133,7 @@ public sealed class SequencerLivePathTests
     [InlineData(InvalidAcknowledgement.ProducerSequence)]
     [InlineData(InvalidAcknowledgement.Payload)]
     [InlineData(InvalidAcknowledgement.HighWater)]
+    [InlineData(InvalidAcknowledgement.SessionId)]
     public async Task DoesNotMulticastBeforeAnExactDurableAcknowledgement(
         InvalidAcknowledgement invalidAcknowledgement)
     {
@@ -148,20 +168,22 @@ public sealed class SequencerLivePathTests
 
             try
             {
+                Guid sessionId = new("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f");
                 await submissions.SendAsync(
                     EncodeStart(
                         ProducerId,
                         1,
-                        new Guid("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f")),
+                        sessionId),
                     timeout.Token);
 
                 FrameHeader candidate = await ReceiveCandidateAsync(stream, timeout.Token);
                 Assert.Equal(MessageType.StartNewSession, candidate.MessageType);
+                Assert.Equal(sessionId, candidate.SessionId);
                 Assert.Equal(1, candidate.SequenceId);
                 await AssertNoMulticastAsync(committed, timeout.Token);
 
                 await stream.SendExactlyAsync(
-                    EncodeInvalidAcknowledgement(invalidAcknowledgement),
+                    EncodeInvalidAcknowledgement(invalidAcknowledgement, sessionId),
                     timeout.Token);
 
                 await Assert.ThrowsAsync<InvalidDataException>(async () => await sequencerTask);
@@ -196,9 +218,10 @@ public sealed class SequencerLivePathTests
         return header;
     }
 
-    private static void AssertCommit(FrameHeader header, long sequenceId)
+    private static void AssertCommit(FrameHeader header, Guid sessionId, long sequenceId)
     {
         Assert.Equal(MessageType.CommitThrough, header.MessageType);
+        Assert.Equal(sessionId, header.SessionId);
         Assert.Equal(FrameCodec.ControlProducerId, header.ProducerId);
         Assert.Equal(0uL, header.ProducerSequence);
         Assert.Equal(sequenceId, header.SequenceId);
@@ -253,49 +276,51 @@ public sealed class SequencerLivePathTests
         ulong producerSequence,
         Guid sessionId)
     {
-        byte[] payload = new byte[16];
-        StartNewSessionCodec.Encode(new StartNewSession(sessionId), payload);
-        return EncodeSubmission(MessageType.StartNewSession, producerId, producerSequence, payload);
+        return EncodeSubmission(MessageType.StartNewSession, sessionId, producerId, producerSequence, []);
     }
 
     private static byte[] EncodeSubmission(
         MessageType messageType,
+        Guid sessionId,
         ushort producerId,
         ulong producerSequence,
         ReadOnlySpan<byte> payload)
     {
         byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, producerId, producerSequence, 0, payload, frame);
+        FrameCodec.Encode(messageType, sessionId, producerId, producerSequence, 0, payload, frame);
         return frame;
     }
 
     private static byte[] EncodeInvalidAcknowledgement(
-        InvalidAcknowledgement invalidAcknowledgement)
+        InvalidAcknowledgement invalidAcknowledgement,
+        Guid sessionId)
     {
         switch (invalidAcknowledgement)
         {
             case InvalidAcknowledgement.Length:
-                byte[] invalidLength = CommitThroughCodec.Encode(1).Bytes.ToArray();
+                byte[] invalidLength = CommitThroughCodec.Encode(sessionId, 1).Bytes.ToArray();
                 BinaryPrimitives.WriteUInt32BigEndian(
                     invalidLength,
                     FrameCodec.MinimumFrameSize - 1);
                 return invalidLength;
             case InvalidAcknowledgement.Checksum:
-                byte[] invalidChecksum = CommitThroughCodec.Encode(1).Bytes.ToArray();
+                byte[] invalidChecksum = CommitThroughCodec.Encode(sessionId, 1).Bytes.ToArray();
                 invalidChecksum[^1] ^= 0xff;
                 return invalidChecksum;
             case InvalidAcknowledgement.MessageType:
                 return FrameCodec.Encode(
                     MessageType.PlaceOrder,
+                    sessionId,
                     FrameCodec.ControlProducerId,
                     0,
                     1,
                     []).Bytes.ToArray();
             case InvalidAcknowledgement.ProducerId:
-                return FrameCodec.Encode(MessageType.CommitThrough, 1, 0, 1, []).Bytes.ToArray();
+                return FrameCodec.Encode(MessageType.CommitThrough, sessionId, 1, 0, 1, []).Bytes.ToArray();
             case InvalidAcknowledgement.ProducerSequence:
                 return FrameCodec.Encode(
                     MessageType.CommitThrough,
+                    sessionId,
                     FrameCodec.ControlProducerId,
                     1,
                     1,
@@ -303,12 +328,17 @@ public sealed class SequencerLivePathTests
             case InvalidAcknowledgement.Payload:
                 return FrameCodec.Encode(
                     MessageType.CommitThrough,
+                    sessionId,
                     FrameCodec.ControlProducerId,
                     0,
                     1,
                     [0x01]).Bytes.ToArray();
             case InvalidAcknowledgement.HighWater:
-                return CommitThroughCodec.Encode(2).Bytes.ToArray();
+                return CommitThroughCodec.Encode(sessionId, 2).Bytes.ToArray();
+            case InvalidAcknowledgement.SessionId:
+                return CommitThroughCodec.Encode(
+                    new Guid("708192a3-b4c5-d6e7-f809-1a2b3c4d5e6f"),
+                    1).Bytes.ToArray();
             default:
                 throw new ArgumentOutOfRangeException(nameof(invalidAcknowledgement));
         }
@@ -330,5 +360,6 @@ public sealed class SequencerLivePathTests
         ProducerSequence,
         Payload,
         HighWater,
+        SessionId,
     }
 }

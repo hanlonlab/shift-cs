@@ -4,7 +4,7 @@ namespace Shift.Protocol.Internal.Control;
 
 public static class CommitThroughCodec
 {
-    public static CanonicalFrame Encode(long sequenceId)
+    public static CanonicalFrame Encode(Guid sessionId, long sequenceId)
     {
         if (sequenceId <= 0)
         {
@@ -13,6 +13,7 @@ public static class CommitThroughCodec
 
         return FrameCodec.Encode(
             MessageType.CommitThrough,
+            sessionId,
             FrameCodec.ControlProducerId,
             0,
             sequenceId,

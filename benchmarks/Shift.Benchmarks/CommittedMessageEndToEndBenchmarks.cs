@@ -33,7 +33,7 @@ public class CommittedMessageEndToEndBenchmarks
     private readonly byte[] _payload = new byte[
         UnixDatagramReceiver.MaximumDatagramSize - FrameCodec.MinimumFrameSize];
     private readonly byte[] _submission = new byte[UnixDatagramReceiver.MaximumDatagramSize];
-    private readonly byte[] _lifecycleSubmission = new byte[FrameCodec.MinimumFrameSize + 16];
+    private readonly byte[] _lifecycleSubmission = new byte[FrameCodec.MinimumFrameSize];
     private readonly byte[] _receiveBuffer = new byte[UnixDatagramReceiver.MaximumDatagramSize];
 
     private string _directory = null!;
@@ -52,6 +52,7 @@ public class CommittedMessageEndToEndBenchmarks
     private Task<int> _receiveTask = null!;
     private ushort _producerId;
     private ulong _producerSequence;
+    private Guid _sessionId;
     private int _payloadLength;
     private int _submissionLength;
     private long _expectedSequenceId;
@@ -102,12 +103,13 @@ public class CommittedMessageEndToEndBenchmarks
     {
         _iterationCancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
         _receivedLength = 0;
+        _sessionId = Guid.NewGuid();
 
         switch (Message)
         {
             case MessageType.StartNewSession:
                 _payloadLength = StartNewSessionCodec.Encode(
-                    new StartNewSession(Guid.NewGuid()),
+                    new StartNewSession(),
                     _payload);
                 break;
             case MessageType.EndCurrentSession:
@@ -129,6 +131,7 @@ public class CommittedMessageEndToEndBenchmarks
         _producerSequence = Message == MessageType.StartNewSession ? 1uL : 2uL;
         _submissionLength = FrameCodec.Encode(
             Message,
+            _sessionId,
             _producerId,
             _producerSequence,
             0,
@@ -241,16 +244,13 @@ public class CommittedMessageEndToEndBenchmarks
 
     private void StartSession()
     {
-        Span<byte> payload = stackalloc byte[16];
-        int payloadLength = StartNewSessionCodec.Encode(
-            new StartNewSession(Guid.NewGuid()),
-            payload);
         int frameLength = FrameCodec.Encode(
             MessageType.StartNewSession,
+            _sessionId,
             1,
             1,
             0,
-            payload[..payloadLength],
+            [],
             _lifecycleSubmission);
 
         _submissions.SendAsync(
@@ -261,7 +261,7 @@ public class CommittedMessageEndToEndBenchmarks
             1,
             1,
             1,
-            payload[..payloadLength]);
+            []);
         ReceiveAndValidateFrame(
             MessageType.CommitThrough,
             FrameCodec.ControlProducerId,
@@ -277,6 +277,7 @@ public class CommittedMessageEndToEndBenchmarks
             _lifecycleSubmission);
         int frameLength = FrameCodec.Encode(
             MessageType.EndCurrentSession,
+            _sessionId,
             1,
             2,
             0,
@@ -314,6 +315,7 @@ public class CommittedMessageEndToEndBenchmarks
             out ReadOnlySpan<byte> payload);
         if (status != OperationStatus.Done
             || header.MessageType != messageType
+            || header.SessionId != _sessionId
             || header.ProducerId != producerId
             || header.ProducerSequence != producerSequence
             || header.SequenceId != sequenceId

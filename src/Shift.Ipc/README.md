@@ -4,7 +4,7 @@ Owns the single-host transports used between processes: shared AF_UNIX datagram 
 
 ## Submission ingress
 
-Producers send submissions to the Sequencer over AF_UNIX datagrams. Each datagram contains exactly one complete encoded frame and is limited to 2,048 bytes. The current 29 bytes of framing overhead leave up to 2,019 bytes for the payload.
+Producers send submissions to the Sequencer over AF_UNIX datagrams. Each datagram contains exactly one complete encoded frame with a nonempty session ID and is limited to 2,048 bytes. The 45 bytes of framing overhead leave up to 2,003 bytes for the payload.
 
 `Shift.Ipc` treats the frame as opaque bytes. Encoding and decoding belong to `Shift.Protocol`.
 
@@ -14,11 +14,11 @@ A completed send means the kernel accepted the datagram. Only the frame later pu
 
 ## Durability stream
 
-The Archiver listens on `/run/shift/archiver.sock`. Each batch is `[count:uint32 big-endian][canonical frame 1]...[canonical frame N]`; each frame already begins with its own big-endian length. The total canonical frame bytes are limited to 1 MiB. The Archiver replies with one canonical `CommitThrough` frame.
+The Archiver listens on `/run/shift/archiver.sock`. Each batch is `[count:uint32 big-endian][canonical frame 1]...[canonical frame N]`; each frame already begins with its own big-endian length. The total canonical frame bytes are limited to 1 MiB. The Archiver replies with one canonical `CommitThrough` frame carrying the batch's session ID.
 
 ## Committed multicast
 
-The Sequencer sends one canonical frame per datagram to `239.255.0.1:55000` over IPv4 loopback with TTL 1. It sends committed batch frames in order followed by their `CommitThrough` watermark. UDP loss recovery and replay are outside the current live-only implementation.
+The Sequencer sends one canonical frame per datagram to `239.255.0.1:55000` over IPv4 loopback with TTL 1. Every frame, including the `CommitThrough` watermark, carries its session ID. UDP loss recovery and replay are outside the current live-only implementation.
 
 ## Belongs here
 

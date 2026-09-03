@@ -7,6 +7,7 @@ public class FrameRoleCodecTests
 {
     private const ushort ProducerId = 1;
     private const ulong ProducerSequence = 2;
+    private static readonly Guid _sessionId = new("00112233-4455-6677-8899-aabbccddeeff");
 
     [Fact]
     public void DecodeSubmissionReturnsCanonicalFrame()
@@ -22,6 +23,7 @@ public class FrameRoleCodecTests
 
         Assert.Equal(source, frame.Bytes.ToArray());
         Assert.Equal(MessageType.PlaceOrder, frame.Header.MessageType);
+        Assert.Equal(_sessionId, frame.Header.SessionId);
         Assert.Equal(ProducerId, frame.Header.ProducerId);
         Assert.Equal(ProducerSequence, frame.Header.ProducerSequence);
         Assert.Equal(0, frame.Header.SequenceId);
@@ -113,6 +115,7 @@ public class FrameRoleCodecTests
         ReadOnlySpan<byte> payload) =>
         FrameCodec.Encode(
             messageType,
+            _sessionId,
             producerId,
             producerSequence,
             sequenceId,

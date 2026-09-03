@@ -8,7 +8,7 @@ namespace Shift.Protocol.Framing;
 /// </summary>
 /// <remarks>
 /// <code>
-/// [frame length:4][version:1][message type:2][producer ID:2][producer sequence:8][sequence ID:8][payload:N][CRC-32C:4]
+/// [frame length:4][version:1][message type:2][session ID:16][producer ID:2][producer sequence:8][sequence ID:8][payload:N][CRC-32C:4]
 /// </code>
 /// Multibyte values are big-endian. Frame length includes the entire frame, and CRC-32C covers
 /// every preceding byte. Payload length is frame length minus <see cref="MinimumFrameSize"/>.
@@ -25,7 +25,9 @@ public static class FrameCodec
     private const int VersionFieldSize = sizeof(byte);
     private const int MessageTypeOffset = VersionOffset + VersionFieldSize;
     private const int MessageTypeFieldSize = sizeof(ushort);
-    private const int ProducerIdOffset = MessageTypeOffset + MessageTypeFieldSize;
+    private const int SessionIdOffset = MessageTypeOffset + MessageTypeFieldSize;
+    private const int SessionIdFieldSize = 16;
+    private const int ProducerIdOffset = SessionIdOffset + SessionIdFieldSize;
     private const int ProducerIdFieldSize = sizeof(ushort);
     private const int ProducerSequenceOffset = ProducerIdOffset + ProducerIdFieldSize;
     private const int ProducerSequenceFieldSize = sizeof(ulong);
@@ -42,13 +44,14 @@ public static class FrameCodec
     /// <remarks>Payload and destination may overlap.</remarks>
     public static int Encode(
         MessageType messageType,
+        Guid sessionId,
         ushort producerId,
         ulong producerSequence,
         long sequenceId,
         ReadOnlySpan<byte> payload,
         Span<byte> destination)
     {
-        int frameLength = GetFrameLength(messageType, payload.Length);
+        int frameLength = GetFrameLength(messageType, sessionId, payload.Length);
         if (destination.Length < frameLength)
         {
             throw new ArgumentException("Destination is too small for the encoded frame.", nameof(destination));
@@ -64,6 +67,10 @@ public static class FrameCodec
         BinaryPrimitives.WriteUInt16BigEndian(
             frame.Slice(MessageTypeOffset, MessageTypeFieldSize),
             (ushort)messageType);
+        sessionId.TryWriteBytes(
+            frame.Slice(SessionIdOffset, SessionIdFieldSize),
+            bigEndian: true,
+            out _);
         BinaryPrimitives.WriteUInt16BigEndian(
             frame.Slice(ProducerIdOffset, ProducerIdFieldSize),
             producerId);
@@ -87,19 +94,21 @@ public static class FrameCodec
     /// </summary>
     public static CanonicalFrame Encode(
         MessageType messageType,
+        Guid sessionId,
         ushort producerId,
         ulong producerSequence,
         long sequenceId,
         ReadOnlySpan<byte> payload)
     {
-        int frameLength = GetFrameLength(messageType, payload.Length);
+        int frameLength = GetFrameLength(messageType, sessionId, payload.Length);
         byte[] bytes = new byte[frameLength];
-        Encode(messageType, producerId, producerSequence, sequenceId, payload, bytes);
+        Encode(messageType, sessionId, producerId, producerSequence, sequenceId, payload, bytes);
 
         FrameHeader header = new(
             (uint)frameLength,
             CurrentVersion,
             messageType,
+            sessionId,
             producerId,
             producerSequence,
             sequenceId);
@@ -188,10 +197,19 @@ public static class FrameCodec
             return OperationStatus.InvalidData;
         }
 
+        Guid sessionId = new(
+            source.Slice(SessionIdOffset, SessionIdFieldSize),
+            bigEndian: true);
+        if (sessionId == Guid.Empty)
+        {
+            return OperationStatus.InvalidData;
+        }
+
         header = new FrameHeader(
             (uint)frameLength,
             CurrentVersion,
             messageType,
+            sessionId,
             BinaryPrimitives.ReadUInt16BigEndian(source.Slice(ProducerIdOffset, ProducerIdFieldSize)),
             BinaryPrimitives.ReadUInt64BigEndian(
                 source.Slice(ProducerSequenceOffset, ProducerSequenceFieldSize)),
@@ -245,11 +263,19 @@ public static class FrameCodec
             source.Slice(HeaderSize, source.Length - MinimumFrameSize));
     }
 
-    private static int GetFrameLength(MessageType messageType, int payloadLength)
+    private static int GetFrameLength(
+        MessageType messageType,
+        Guid sessionId,
+        int payloadLength)
     {
         if (!Enum.IsDefined(messageType))
         {
             throw new ArgumentOutOfRangeException(nameof(messageType));
+        }
+
+        if (sessionId == Guid.Empty)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sessionId));
         }
 
         if (payloadLength > MaximumFrameSize - MinimumFrameSize)

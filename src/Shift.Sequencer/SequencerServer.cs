@@ -76,6 +76,7 @@ public sealed class SequencerServer(
 
         switch (submission.Status)
         {
+            case SubmissionStatus.SessionMismatch:
             case SubmissionStatus.PendingDuplicate:
                 return;
             case SubmissionStatus.CommittedDuplicate:
@@ -128,9 +129,11 @@ public sealed class SequencerServer(
 
     private async Task ArchiveAndPublishBatchAsync(CancellationToken cancellationToken)
     {
+        Guid expectedSessionId = _state.SessionId;
         long expectedSequence = _state.LastAcceptedSequence;
         await archiver.SendExactlyAsync(EncodePendingBatch(), cancellationToken);
         byte[] durableWatermark = await ReceiveDurableWatermarkAsync(
+            expectedSessionId,
             expectedSequence,
             cancellationToken);
 
@@ -163,13 +166,15 @@ public sealed class SequencerServer(
     }
 
     private async Task<byte[]> ReceiveDurableWatermarkAsync(
+        Guid expectedSessionId,
         long expectedSequence,
         CancellationToken cancellationToken)
     {
         byte[] durableWatermark = new byte[FrameCodec.MinimumFrameSize];
         await archiver.ReceiveExactlyAsync(durableWatermark, cancellationToken);
         CanonicalFrame acknowledgement = CommitThroughCodec.Decode(durableWatermark);
-        if (acknowledgement.Header.SequenceId != expectedSequence)
+        if (acknowledgement.Header.SessionId != expectedSessionId
+            || acknowledgement.Header.SequenceId != expectedSequence)
         {
             throw new InvalidDataException("The Archiver returned an invalid durable watermark.");
         }
