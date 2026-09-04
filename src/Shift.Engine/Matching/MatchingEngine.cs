@@ -8,7 +8,7 @@ public enum StartSessionStatus : byte
     AlreadyStarted = 2
 }
 
-public sealed class MatchingEngine(long PairId)
+public sealed class MatchingEngine
 {
     private readonly LocalOrderBook _localOrderBook = new();
 
