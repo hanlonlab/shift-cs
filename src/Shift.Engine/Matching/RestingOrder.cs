@@ -1,3 +1,5 @@
+using Shift.Protocol.Internal;
+
 namespace Shift.Engine.Matching;
 
 public readonly record struct RestingOrder(

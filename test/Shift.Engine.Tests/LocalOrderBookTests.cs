@@ -1,4 +1,5 @@
 using Shift.Engine.Matching;
+using Shift.Protocol.Internal;
 using Xunit;
 
 namespace Shift.Engine.Tests;

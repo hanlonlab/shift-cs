@@ -1,5 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using Shift.Engine.Matching;
+using Shift.Protocol.Internal;
 
 [ArtifactsPath("bin/BenchmarkDotNet.Artifacts")]
 [MemoryDiagnoser]
