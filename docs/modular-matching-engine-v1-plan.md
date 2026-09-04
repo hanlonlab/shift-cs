@@ -16,14 +16,14 @@ Before matching logic:
    - The caller serializes operations; the engine has no locks.
    - Instrument ID, sequence, timestamps, tick validation, price bands, risk, latency, fees, persistence, and publication remain outside.
    - The reference adapter supplies atomic BBO snapshots and trades in deterministic order.
-5. Specify a second real same-price policy before freezing the priority and allocation hooks. Pro-rata is the intended proof, but its weights, rounding, snapshot timing, minimum allocation, anonymous-reference participation, and self-trade interaction must be decided first.
+5. Use the pro-rata weighting, rounding, snapshot timing, residual, anonymous-reference, and self-trade rules specified in the matching README as the second real same-price policy before freezing the priority and allocation hooks.
 6. Do not change frame codecs, protocol messages, sequencer, persistence, networking, gateways, risk, or public market-data publication.
 
 The committed baseline at `5d6a5d5` has 111 repository tests. Preserve any later protocol work already in progress.
 
 ## Ownership
 
-- Public `MatchingEngine` owns lifecycle, validation, canonical state mutation, hook coordination, result construction, and invariant checks.
+- Public `MatchingEngine` owns lifecycle, validation, canonical state mutation, hook coordination, engine result construction, and invariant checks. Its validation and result types stay in `Shift.Engine`.
 - Public immutable `MatchingProfile` is configuration only. It identifies one complete, compatible hook bundle.
 - Internal `MatchingHooks` holds the stateless hook implementations selected by the profile.
 - Internal `OrderBook` owns participant-order facts and lookup.
@@ -99,11 +99,11 @@ Quote updates cannot fill, cancel, or reprice participant orders in v1 because `
 
 ## Public contract
 
-Construct the engine with one explicit named profile:
+The current base shell is parameterless. When matching behavior is added, construct the engine with one explicit named profile:
 
 - `MatchingEngine(MatchingProfile profile)`
 - `MatchingProfiles.PriceTimeBboShadowV1`
-- `MatchingProfiles.ProRataBboShadowV1` after its prerequisite decisions are complete
+- `MatchingProfiles.ProRataBboShadowV1` after its allocation behavior is implemented
 
 Keep the existing public `OrderType` and wire representation. `IOrderAdmissionHook` immediately normalizes each accepted value into independent internal semantics so the matching path does not switch on the combined enum:
 
@@ -115,20 +115,22 @@ Keep the existing public `OrderType` and wire representation. `IOrderAdmissionHo
 
 This keeps the current protocol stable while separating the actual hook decisions. Do not add hidden, reserve, market, FOK, timed, stop, peg, routed, auction, or replace values until one of those behaviors is implemented. Unknown enum values receive a typed rejection.
 
-Other public value types:
+The engine reuses the existing protocol `OrderSide` values, `Buy` and `Sell`. Other engine-facing value types belong in `Shift.Engine`:
 
-- Existing `OrderSide`: `Buy`, `Sell`.
 - `ReferenceLevel`: positive `PriceTicks` and `Quantity`.
 - `ReferenceLevelState`: price, raw observed quantity, and executable modeled quantity.
 - `Fill`: participant order ID, price ticks, quantity, and `Maker`/`Taker` role.
 - `CanceledOrder`: order ID and canceled quantity.
+- `StartSessionStatus`: `Started` or `AlreadyStarted`.
 - One shared `RejectionReason` enum and one `CancellationReason` enum, with explicit numeric values.
 - `MatchingProfileId` and profile version.
 
+Protocol commands remain input records. Protocol output records are mapped from accepted engine results later; `MatchingEngine` does not construct `OrderUpdated` or `TradeExecuted` directly.
+
 Public operations:
 
-- `StartDay()`
-- `EndDay(List<CanceledOrder>)`
+- `StartSessionStatus StartSession(StartNewSession command)`
+- `EndSession(EndCurrentSession command, List<CanceledOrder>)`
 - `PlaceOrder(PlaceOrder command, List<Fill>)`, reusing the protocol command record
 - `CancelOrder(CancelOrder command)`, reusing the protocol command record
 - `ReduceOrder(orderId, reductionQuantity)`
@@ -138,18 +140,18 @@ Public operations:
 
 Do not expose `TryGetBestLocalOrder`: FIFO has one obvious head, while pro-rata can make several orders simultaneously eligible. Queries expose facts; hooks decide execution priority.
 
-Use method-specific result structs:
+Use method-specific result types:
 
 - Placement: rejection, cancellation reason, filled/resting/canceled quantities, and appended fill start/count.
 - Cancel: rejection and canceled quantity.
 - Reduce: rejection, resulting remaining quantity, and whether priority reset.
 - Quote update: rejection.
 - Reference trade: rejection, interpreted aggressor side, unallocated quantity, and appended fill start/count.
-- Day lifecycle: rejection; `EndDay` also returns appended cancellation start/count.
+- Session start: `Started` or `AlreadyStarted`; `EndSession` later returns its rejection and appended cancellation start/count.
 
 All output lists are caller-owned, reusable, and append-only. Unknown enum values and unsupported order types are input-policy rejections before lifecycle checks. Only corrupted internal invariants, invalid internal hook output, or unrecoverable runtime failures may throw.
 
-Reuse the existing lifecycle rejection values without changing the protocol: `StartDay` from either `Open` or `Ended` returns `DayAlreadyStarted`; mutations and `EndDay` outside `Open` return `DayNotStarted`. In this engine contract, `DayNotStarted` therefore means the day is not open.
+The current `StartSession` shell returns the engine-owned `StartSessionStatus`: `Started` for the first command and `AlreadyStarted` for another start while open. Define the remaining engine-owned lifecycle results with `EndSession` and the first matching operation; do not reuse protocol output-event rejection types.
 
 Retain typed reasons for invalid output buffer, order ID, side, price, quantity, order type, reference quote, arithmetic overflow, lifecycle, duplicate ID, unknown order, over-reduction, raw locked/crossed quote, and ambiguous reference trade. `IOrderAdmissionHook` uses `UnsupportedOrderType`; a profile-specific quote rejection that is not a raw lock/cross uses `InvalidReferenceQuote`.
 
@@ -180,8 +182,8 @@ All caller-rejecting checks occur before step 5. Matching hooks cannot return ca
 - Reduce: input shape -> lifecycle -> lookup and quantity bounds -> remove at zero, otherwise `IReductionHook` -> if priority resets, call `IQueuePositionHook` and assign a new `PriorityOrdinal` -> apply.
 - Quote update: primitive shape -> `IReferenceQuoteHook.ValidateSnapshot` -> lifecycle -> `IReferenceQuoteHook.PlanTransition` -> `IReferenceCreditHook` -> `IQueuePositionHook` -> validate the complete bid/ask plan -> apply atomically.
 - Reference trade: primitive shape -> lifecycle -> `IReferenceTradeClassifierHook` -> `IReferenceTradeScopeHook` -> ordinary crossing/price/liquidity/time/allocation pipeline -> `IExecutionTermsHook` -> `IReferenceCreditHook` -> apply -> return diagnostic remainder.
-- Day start: reject unless `NotStarted`, clear initial state, then open.
-- Day end: reject unless `Open`, append cancellations in the fixed kernel order, clear local/reference/modeled state, then enter `Ended`.
+- Session start: return `AlreadyStarted` unless `NotStarted`; otherwise clear initial state and enter `Open`.
+- Session end: reject unless `Open`, append cancellations in the fixed kernel order, clear local/reference/modeled state, then enter `Ended`.
 
 The reference-trade path reuses the ordinary priority and allocation pipeline. It does not contain a second hard-coded matcher.
 
@@ -258,7 +260,7 @@ Each hook receives focused table-driven tests for every branch and deterministic
 - trade classification, ambiguity, local-only inference, passive fills, credit reconciliation, and unallocated volume;
 - checked-arithmetic boundaries and null output buffers.
 
-Before freezing the hook API, run one identical scenario through price-time and pro-rata profiles and prove that only same-price allocation changes. The pro-rata specification must define eligible weight, allocation snapshot timing, rounding in integer quantity units, residual distribution, minimum allocation, anonymous-reference participation, and whether self-owned interest is removed before the allocation snapshot or terminates the aggressor.
+Before freezing the hook API, run one identical scenario through price-time and pro-rata profiles and prove that only same-price allocation changes. The matching README fixes eligible weight, allocation snapshot timing, integer rounding, residual distribution, minimum allocation, anonymous-reference participation, and self-trade handling.
 
 After focused deterministic tests pass, add the deterministic randomized comparison against an independent slow model. The slow model must read an explicit profile choice rather than assume FIFO.
 
@@ -267,8 +269,8 @@ Keep recorded, non-gating benchmarks for resting at existing/new prices, cancel,
 ## Implementation order
 
 1. Put the fixed-invariant/hook table, call order, and exact price-time profile matrix in the matching README.
-2. Resolve the pro-rata prerequisites, including its self-trade interaction, with numeric examples, then add its exact profile matrix.
-3. Reuse the existing protocol order, fill, and rejection value types. Define the method-specific engine results, profile ID/version, internal normalized order semantics, hook contexts, and hook decisions.
+2. Preserve the pro-rata rules and numeric examples in the matching README when adding its exact profile matrix.
+3. Reuse the existing protocol input commands and order enums. Define fills, rejections, method-specific results, profile ID/version, internal normalized order semantics, hook contexts, and hook decisions in `Shift.Engine`; defer protocol output mapping.
 4. Define the internal stateless hook interfaces and explicit profile-to-hook composition. There are no optional or implicit hooks.
 5. Refactor `LocalOrderBook` into policy-neutral internal state while preserving its dictionary and unlink mechanics. In the same change, move low-level tests behind `InternalsVisibleTo` if still useful and move benchmarks to the public engine.
 6. Implement non-reference placement, cancellation, and reduction through the price-time hooks.
