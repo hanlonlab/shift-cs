@@ -1,0 +1,81 @@
+name: Benchmark PR comment
+
+on:
+  workflow_run:
+    workflows:
+      - Tests and benchmarks
+    types:
+      - completed
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Publish benchmark results
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download benchmark results
+        if: github.event.workflow_run.conclusion == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: benchmark-results
+          path: ${{ runner.temp }}/benchmark-results
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Update pull request comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BENCHMARK_RESULTS: ${{ runner.temp }}/benchmark-results
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            const results = process.env.BENCHMARK_RESULTS;
+            const marker = "<!-- shift-benchmark-results -->";
+            const run = context.payload.workflow_run;
+            const report = run.conclusion === "success"
+              ? fs.readFileSync(
+                  path.join(results, "benchmark-results.md"),
+                  "utf8")
+              : `## Benchmark results\n\nNo results were produced because the workflow finished with **${run.conclusion}**.`;
+            const body = `${marker}\n${report}\n\n[Workflow run](${run.html_url}) for \`${run.head_sha.slice(0, 7)}\`.`;
+            const { data: pullRequests } = await github.rest.pulls.list({
+              ...context.repo,
+              head: `${run.head_repository.owner.login}:${run.head_branch}`,
+              state: "open",
+              per_page: 100
+            });
+            const pullRequest = pullRequests.find(
+              pullRequest => pullRequest.head.sha === run.head_sha);
+
+            if (!pullRequest) {
+              core.info("No open pull request matches this workflow run.");
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: pullRequest.number,
+              per_page: 100
+            });
+            const existing = comments.find(comment =>
+              comment.user?.login === "github-actions[bot]"
+              && comment.body?.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                body
+              });
+            }

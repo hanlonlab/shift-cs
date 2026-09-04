@@ -1,7 +1,9 @@
-name: Tests
+name: Tests and benchmarks
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -9,6 +11,7 @@ permissions:
 
 jobs:
   test:
+    name: Tests and benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -20,5 +23,19 @@ jobs:
           dotnet format Shift.slnx --verify-no-changes --no-restore
           dotnet build Shift.slnx --configuration Release --no-restore -warnaserror
           dotnet test --solution Shift.slnx --configuration Release --no-build --no-restore --minimum-expected-tests 111
-      - name: End-to-end performance benchmarks
-        run: dotnet run --project benchmarks/Shift.Benchmarks/Shift.Benchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*CommittedMessageEndToEndBenchmarks*' --stopOnFirstError
+      - name: Performance benchmarks
+        run: dotnet run --project benchmarks/Shift.Benchmarks/Shift.Benchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*' --stopOnFirstError
+      - name: Publish benchmark summary
+        run: |
+          {
+            echo "## Benchmark results"
+            echo
+            cat bin/BenchmarkDotNet.Artifacts/results/*-report-github.md
+          } | tee benchmark-results.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-results
+          path: |
+            benchmark-results.md
+            bin/BenchmarkDotNet.Artifacts/
