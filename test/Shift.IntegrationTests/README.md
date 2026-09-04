@@ -4,7 +4,8 @@ This project verifies end-to-end AF_UNIX and multicast IPC and committed-frame d
 
 ## Belongs here
 
-- Cross-process scenarios that exercise the complete committed message path.
+- Socket submissions through the Sequencer, its in-process Archiver, and committed multicast.
+- Exact archived bytes, commit markers, session rotation, duplicates, and archive failures.
 
 ## Does not belong here
 

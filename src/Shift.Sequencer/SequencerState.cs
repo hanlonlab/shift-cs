@@ -14,7 +14,7 @@ public enum SubmissionStatus
 
 public readonly record struct SubmissionResult(
     SubmissionStatus Status,
-    ReadOnlyMemory<byte> Frame,
+    CanonicalFrame Frame,
     bool ForceCommit
 );
 
@@ -28,13 +28,9 @@ public sealed class SequencerState
     private bool _faulted;
     private bool _sessionActive;
     private Guid _sessionId;
-    private ReadOnlyMemory<byte> _sessionStartFrame;
+    private CanonicalFrame _sessionStartFrame;
 
     public long LastAcceptedSequence { get; private set; }
-
-    internal int PendingBytes => _pendingBytes;
-
-    internal Guid SessionId => _sessionId;
 
     public SubmissionResult Submit(VerifiedSubmission submission)
     {
@@ -52,7 +48,7 @@ public sealed class SequencerState
         {
             return new SubmissionResult(
                 SubmissionStatus.SessionMismatch,
-                ReadOnlyMemory<byte>.Empty,
+                default,
                 ForceCommit: false);
         }
 
@@ -87,7 +83,7 @@ public sealed class SequencerState
         {
             return new SubmissionResult(
                 SubmissionStatus.BatchFull,
-                ReadOnlyMemory<byte>.Empty,
+                default,
                 ForceCommit: false);
         }
 
@@ -141,7 +137,7 @@ public sealed class SequencerState
             _producers.Clear();
             _sessionActive = true;
             _sessionId = header.SessionId;
-            _sessionStartFrame = frame.Bytes;
+            _sessionStartFrame = frame;
         }
 
         if (!_producers.TryGetValue(header.ProducerId, out ProducerState? producer))
@@ -162,7 +158,7 @@ public sealed class SequencerState
 
         return new SubmissionResult(
             SubmissionStatus.Accepted,
-            frame.Bytes,
+            frame,
             ForceCommit: endsSession || _pendingBytes == MaximumPendingBytes);
     }
 
@@ -235,11 +231,11 @@ public sealed class SequencerState
             return header.ProducerSequence <= existing.LastCommittedProducerSequence
                 ? new SubmissionResult(
                     SubmissionStatus.CommittedDuplicate,
-                    existing.LastAcceptedFrame.Bytes,
+                    existing.LastAcceptedFrame,
                     ForceCommit: false)
                 : new SubmissionResult(
                     SubmissionStatus.PendingDuplicate,
-                    ReadOnlyMemory<byte>.Empty,
+                    default,
                     ForceCommit: false);
         }
 
@@ -248,11 +244,11 @@ public sealed class SequencerState
             return header.ProducerSequence <= existing.LastCommittedProducerSequence
                 ? new SubmissionResult(
                     SubmissionStatus.CommittedDuplicate,
-                    ReadOnlyMemory<byte>.Empty,
+                    default,
                     ForceCommit: false)
                 : new SubmissionResult(
                     SubmissionStatus.PendingDuplicate,
-                    ReadOnlyMemory<byte>.Empty,
+                    default,
                     ForceCommit: false);
         }
 

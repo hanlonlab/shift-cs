@@ -12,7 +12,7 @@ namespace Shift.Protocol.Framing;
 /// </code>
 /// Multibyte values are big-endian. Frame length includes the entire frame, and CRC-32C covers
 /// every preceding byte. Payload length is frame length minus <see cref="MinimumFrameSize"/>.
-/// Producer ID 0 is reserved for Archiver control frames.
+/// Producer ID 0 is reserved for commit control frames.
 /// </remarks>
 public static class FrameCodec
 {

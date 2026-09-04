@@ -38,16 +38,12 @@ public class CommittedMessageEndToEndBenchmarks
 
     private string _directory = null!;
     private CancellationTokenSource _shutdown = null!;
-    private UnixStreamSocket _listener = null!;
     private UdpMulticastReceiver _committed = null!;
     private UnixDatagramReceiver _submissionReceiver = null!;
-    private UnixStreamSocket _archiverConnection = null!;
-    private UnixStreamSocket _archiverStream = null!;
     private UdpMulticastSender _multicast = null!;
-    private ArchiverServer _archiver = null!;
+    private SessionArchive _archiver = null!;
     private UnixDatagramSender _submissions = null!;
     private Task _sequencerTask = null!;
-    private Task _archiverTask = null!;
     private CancellationTokenSource _iterationCancellation = null!;
     private Task<int> _receiveTask = null!;
     private ushort _producerId;
@@ -62,7 +58,7 @@ public class CommittedMessageEndToEndBenchmarks
     public MessageType Message { get; set; }
 
     [GlobalSetup]
-    public void StartServers()
+    public void StartSequencer()
     {
         if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux())
         {
@@ -72,29 +68,21 @@ public class CommittedMessageEndToEndBenchmarks
         _directory = Path.Combine("/tmp", $"shift-benchmark-{Guid.NewGuid():N}");
         string archiveRoot = Path.Combine(_directory, "archive");
         string submissionPath = Path.Combine(_directory, "in.sock");
-        string archiverPath = Path.Combine(_directory, "archive.sock");
         var group = IPAddress.Parse("239.255.44.1");
         int port = GetUnusedPort();
         Directory.CreateDirectory(archiveRoot);
 
         _shutdown = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        _listener = UnixStreamSocket.Listen(archiverPath);
         _committed = new UdpMulticastReceiver(group, port, IPAddress.Loopback);
         _submissionReceiver = new UnixDatagramReceiver(submissionPath);
-        _archiverConnection = UnixStreamSocket.ConnectAsync(
-            archiverPath,
-            _shutdown.Token).AsTask().GetAwaiter().GetResult();
+        _archiver = new SessionArchive(archiveRoot);
         _multicast = new UdpMulticastSender(group, port, IPAddress.Loopback);
 
         var sequencer = new SequencerServer(
             _submissionReceiver,
-            _archiverConnection,
+            _archiver,
             _multicast);
         _sequencerTask = sequencer.RunAsync(_shutdown.Token);
-        _archiverStream = _listener
-            .AcceptAsync(_shutdown.Token).AsTask().GetAwaiter().GetResult();
-        _archiver = new ArchiverServer(archiveRoot);
-        _archiverTask = _archiver.RunAsync(_archiverStream, _shutdown.Token);
         _submissions = new UnixDatagramSender(submissionPath);
     }
 
@@ -198,12 +186,12 @@ public class CommittedMessageEndToEndBenchmarks
     }
 
     [GlobalCleanup]
-    public void StopServers()
+    public void StopSequencer()
     {
         _shutdown.Cancel();
         try
         {
-            Task.WhenAll(_sequencerTask, _archiverTask).GetAwaiter().GetResult();
+            _sequencerTask.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
@@ -212,12 +200,9 @@ public class CommittedMessageEndToEndBenchmarks
         {
             _submissions.Dispose();
             _archiver.Dispose();
-            _archiverStream.Dispose();
             _multicast.Dispose();
-            _archiverConnection.Dispose();
             _submissionReceiver.Dispose();
             _committed.Dispose();
-            _listener.Dispose();
             _shutdown.Dispose();
             Directory.Delete(_directory, recursive: true);
         }

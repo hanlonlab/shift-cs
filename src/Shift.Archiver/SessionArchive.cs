@@ -3,14 +3,21 @@ using Shift.Protocol.Internal.Commands;
 
 namespace Shift.Archiver;
 
-internal sealed class SessionArchive(string archiveRoot) : IDisposable
+public sealed class SessionArchive(string archiveRoot) : IDisposable
 {
     private SessionLog? _sessionLog;
     private Guid _sessionId;
     private long _highWater;
+    private bool _disposed;
 
     public long CommitBatch(ReadOnlySpan<CanonicalFrame> frames)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (frames.IsEmpty)
+        {
+            throw new InvalidDataException("An archive batch must contain at least one frame.");
+        }
+
         bool sessionActive = _sessionLog is not null;
         long highWater = _highWater;
         Guid sessionId = _sessionId;
@@ -19,6 +26,13 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
         for (int index = 0; index < frames.Length; index++)
         {
             CanonicalFrame frame = frames[index];
+            if (frame.Header.MessageType == MessageType.CommitThrough
+                || frame.Header.ProducerId == FrameCodec.ControlProducerId
+                || frame.Header.ProducerSequence == 0)
+            {
+                throw new InvalidDataException("Frame is not a valid sequenced candidate.");
+            }
+
             long expectedSequence = checked(highWater + 1);
             if (frame.Header.SequenceId != expectedSequence)
             {
@@ -96,5 +110,6 @@ internal sealed class SessionArchive(string archiveRoot) : IDisposable
     public void Dispose()
     {
         _sessionLog?.Dispose();
+        _disposed = true;
     }
 }

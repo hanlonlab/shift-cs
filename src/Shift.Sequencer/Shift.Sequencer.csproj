@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Shift.Archiver/Shift.Archiver.csproj" />
     <ProjectReference Include="../Shift.Ipc/Shift.Ipc.csproj" />
     <ProjectReference Include="../Shift.Protocol/Shift.Protocol.csproj" />
   </ItemGroup>

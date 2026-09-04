@@ -1,10 +1,10 @@
 # Shift.Archiver.Tests
 
-This project verifies append and flush boundaries, batch validation, durable acknowledgment, and per-session log rotation.
+This project verifies exact-byte appends and commit markers, synchronous commit results, batch validation before file changes, per-session log rotation, and archive disposal.
 
 ## Belongs here
 
-- Session-log and Archiver batch/lifecycle tests.
+- Session-log and direct `SessionArchive` batch/lifecycle tests.
 
 ## Does not belong here
 

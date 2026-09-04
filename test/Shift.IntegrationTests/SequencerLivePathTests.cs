@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using Shift.Archiver;
 using Shift.Ipc;
+using Shift.Protocol;
 using Shift.Protocol.Framing;
 using Shift.Protocol.Internal.Control;
 using Shift.Sequencer;
@@ -25,7 +26,6 @@ public sealed class SequencerLivePathTests
         string directory = Path.Combine("/tmp", $"shift-{Guid.NewGuid():N}");
         string archiveRoot = Path.Combine(directory, "archive");
         string submissionPath = Path.Combine(directory, "in.sock");
-        string archiverPath = Path.Combine(directory, "archive.sock");
         var group = IPAddress.Parse("239.255.43.1");
         int port = GetUnusedPort();
         Directory.CreateDirectory(archiveRoot);
@@ -33,90 +33,85 @@ public sealed class SequencerLivePathTests
         try
         {
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-            using var listener = UnixStreamSocket.Listen(archiverPath);
             using UdpMulticastReceiver committed = new(group, port, IPAddress.Loopback);
             using UnixDatagramReceiver submissionReceiver = new(submissionPath);
-            using UnixStreamSocket archiverConnection = await UnixStreamSocket.ConnectAsync(
-                archiverPath,
-                timeout.Token);
+            using SessionArchive archiver = new(archiveRoot);
             using UdpMulticastSender multicast = new(group, port, IPAddress.Loopback);
-
-            SequencerServer sequencer = new(
-                submissionReceiver,
-                archiverConnection,
-                multicast);
+            SequencerServer sequencer = new(submissionReceiver, archiver, multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
-            using UnixStreamSocket archiverStream = await listener.AcceptAsync(timeout.Token);
-            using ArchiverServer archiver = new(archiveRoot);
-            Task archiverTask = archiver.RunAsync(archiverStream, timeout.Token);
             using UnixDatagramSender submissions = new(submissionPath);
 
             try
             {
                 Guid firstSessionId = new("00112233-4455-6677-8899-aabbccddeeff");
-                await submissions.SendAsync(
-                    EncodeStart(ProducerId, 1, firstSessionId),
-                    timeout.Token);
+                CanonicalFrame firstStart = FrameCodec.Encode(
+                    MessageType.StartNewSession, firstSessionId, ProducerId, 1, 1, []);
+                CanonicalFrame firstStartCommit = CommitThroughCodec.Encode(firstSessionId, 1);
+                byte[] firstStartSubmission = EncodeSubmission(
+                    MessageType.StartNewSession, firstSessionId, ProducerId, 1, []);
+                await submissions.SendAsync(firstStartSubmission, timeout.Token);
+                Assert.Equal(firstStart.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(firstStartCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
 
-                FrameHeader firstStart = await ReceiveAsync(committed, timeout.Token);
-                FrameHeader firstStartCommit = await ReceiveAsync(committed, timeout.Token);
-                Assert.Equal(MessageType.StartNewSession, firstStart.MessageType);
-                Assert.Equal(firstSessionId, firstStart.SessionId);
-                Assert.Equal(1, firstStart.SequenceId);
-                AssertCommit(firstStartCommit, firstSessionId, 1);
+                await submissions.SendAsync(firstStartSubmission, timeout.Token);
+                Assert.Equal(firstStart.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(firstStartCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
 
+                CanonicalFrame order = FrameCodec.Encode(
+                    MessageType.PlaceOrder, firstSessionId, ProducerId, 2, 2, [0x01]);
+                CanonicalFrame orderCommit = CommitThroughCodec.Encode(firstSessionId, 2);
                 await submissions.SendAsync(
                     EncodeSubmission(MessageType.PlaceOrder, firstSessionId, ProducerId, 2, [0x01]),
                     timeout.Token);
+                Assert.Equal(order.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(orderCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+
+                await submissions.SendAsync(firstStartSubmission, timeout.Token);
+                Assert.Equal(orderCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+
+                CanonicalFrame firstEnd = FrameCodec.Encode(
+                    MessageType.EndCurrentSession, firstSessionId, ProducerId, 3, 3, []);
+                CanonicalFrame firstEndCommit = CommitThroughCodec.Encode(firstSessionId, 3);
                 await submissions.SendAsync(
                     EncodeSubmission(MessageType.EndCurrentSession, firstSessionId, ProducerId, 3, []),
                     timeout.Token);
-
-                FrameHeader order = await ReceiveAsync(committed, timeout.Token);
-                FrameHeader firstEnd = await ReceiveAsync(committed, timeout.Token);
-                FrameHeader firstEndCommit = await ReceiveAsync(committed, timeout.Token);
-                Assert.Equal(MessageType.PlaceOrder, order.MessageType);
-                Assert.Equal(firstSessionId, order.SessionId);
-                Assert.Equal(2, order.SequenceId);
-                Assert.Equal(MessageType.EndCurrentSession, firstEnd.MessageType);
-                Assert.Equal(firstSessionId, firstEnd.SessionId);
-                Assert.Equal(3, firstEnd.SequenceId);
-                AssertCommit(firstEndCommit, firstSessionId, 3);
+                Assert.Equal(firstEnd.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(firstEndCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
 
                 Guid secondSessionId = new("40516273-8495-a6b7-c8d9-eafb0c1d2e3f");
+                CanonicalFrame secondStart = FrameCodec.Encode(
+                    MessageType.StartNewSession, secondSessionId, ProducerId, 1, 1, []);
+                CanonicalFrame secondStartCommit = CommitThroughCodec.Encode(secondSessionId, 1);
                 await submissions.SendAsync(
-                    EncodeStart(ProducerId, 1, secondSessionId),
+                    EncodeSubmission(MessageType.StartNewSession, secondSessionId, ProducerId, 1, []),
                     timeout.Token);
-
-                FrameHeader secondStart = await ReceiveAsync(committed, timeout.Token);
-                FrameHeader secondStartCommit = await ReceiveAsync(committed, timeout.Token);
-                Assert.Equal(MessageType.StartNewSession, secondStart.MessageType);
-                Assert.Equal(secondSessionId, secondStart.SessionId);
-                Assert.Equal(1, secondStart.SequenceId);
-                AssertCommit(secondStartCommit, secondSessionId, 1);
+                Assert.Equal(secondStart.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(secondStartCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
 
                 await submissions.SendAsync(
                     EncodeSubmission(MessageType.PlaceOrder, firstSessionId, ProducerId, 2, [0x01]),
                     timeout.Token);
                 await AssertNoMulticastAsync(committed, timeout.Token);
 
+                CanonicalFrame secondEnd = FrameCodec.Encode(
+                    MessageType.EndCurrentSession, secondSessionId, ProducerId, 2, 2, []);
+                CanonicalFrame secondEndCommit = CommitThroughCodec.Encode(secondSessionId, 2);
                 await submissions.SendAsync(
                     EncodeSubmission(MessageType.EndCurrentSession, secondSessionId, ProducerId, 2, []),
                     timeout.Token);
+                Assert.Equal(secondEnd.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
+                Assert.Equal(secondEndCommit.Bytes.ToArray(), await ReceiveAsync(committed, timeout.Token));
 
-                FrameHeader secondEnd = await ReceiveAsync(committed, timeout.Token);
-                FrameHeader secondEndCommit = await ReceiveAsync(committed, timeout.Token);
-                Assert.Equal(MessageType.EndCurrentSession, secondEnd.MessageType);
-                Assert.Equal(secondSessionId, secondEnd.SessionId);
-                Assert.Equal(2, secondEnd.SequenceId);
-                AssertCommit(secondEndCommit, secondSessionId, 2);
-
-                Assert.True(File.Exists(Path.Combine(archiveRoot, $"{firstSessionId:N}.shiftlog")));
-                Assert.True(File.Exists(Path.Combine(archiveRoot, $"{secondSessionId:N}.shiftlog")));
+                AssertArchive(
+                    Path.Combine(archiveRoot, $"{firstSessionId:N}.shiftlog"),
+                    [firstStart, firstStartCommit, order, orderCommit, firstEnd, firstEndCommit]);
+                AssertArchive(
+                    Path.Combine(archiveRoot, $"{secondSessionId:N}.shiftlog"),
+                    [secondStart, secondStartCommit, secondEnd, secondEndCommit]);
             }
             finally
             {
-                await CancelAsync(timeout, sequencerTask, archiverTask);
+                await CancelAsync(timeout, sequencerTask);
             }
         }
         finally
@@ -125,17 +120,8 @@ public sealed class SequencerLivePathTests
         }
     }
 
-    [Theory]
-    [InlineData(InvalidAcknowledgement.Length)]
-    [InlineData(InvalidAcknowledgement.Checksum)]
-    [InlineData(InvalidAcknowledgement.MessageType)]
-    [InlineData(InvalidAcknowledgement.ProducerId)]
-    [InlineData(InvalidAcknowledgement.ProducerSequence)]
-    [InlineData(InvalidAcknowledgement.Payload)]
-    [InlineData(InvalidAcknowledgement.HighWater)]
-    [InlineData(InvalidAcknowledgement.SessionId)]
-    public async Task DoesNotMulticastBeforeAnExactDurableAcknowledgement(
-        InvalidAcknowledgement invalidAcknowledgement)
+    [Fact]
+    public async Task ArchiveFailureStopsSequencerWithoutMulticastingOrOverwritingExistingLog()
     {
         Assert.SkipWhen(
             !OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux(),
@@ -143,51 +129,34 @@ public sealed class SequencerLivePathTests
 
         string directory = Path.Combine("/tmp", $"shift-{Guid.NewGuid():N}");
         string submissionPath = Path.Combine(directory, "in.sock");
-        string archiverPath = Path.Combine(directory, "archive.sock");
         var group = IPAddress.Parse("239.255.43.2");
         int port = GetUnusedPort();
         Directory.CreateDirectory(directory);
+        Guid sessionId = new("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f");
+        string logPath = Path.Combine(directory, $"{sessionId:N}.shiftlog");
+        byte[] existingBytes = [0x01, 0x02, 0x03];
 
         try
         {
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-            using var listener = UnixStreamSocket.Listen(archiverPath);
             using UdpMulticastReceiver committed = new(group, port, IPAddress.Loopback);
             using UnixDatagramReceiver submissionReceiver = new(submissionPath);
-            using UnixStreamSocket archiverConnection = await UnixStreamSocket.ConnectAsync(
-                archiverPath,
-                timeout.Token);
+            await File.WriteAllBytesAsync(logPath, existingBytes, timeout.Token);
+            using SessionArchive archiver = new(directory);
             using UdpMulticastSender multicast = new(group, port, IPAddress.Loopback);
-            SequencerServer sequencer = new(
-                submissionReceiver,
-                archiverConnection,
-                multicast);
+            SequencerServer sequencer = new(submissionReceiver, archiver, multicast);
             Task sequencerTask = sequencer.RunAsync(timeout.Token);
-            using UnixStreamSocket stream = await listener.AcceptAsync(timeout.Token);
             using UnixDatagramSender submissions = new(submissionPath);
 
             try
             {
-                Guid sessionId = new("60718293-a4b5-c6d7-e8f9-0a1b2c3d4e5f");
                 await submissions.SendAsync(
-                    EncodeStart(
-                        ProducerId,
-                        1,
-                        sessionId),
+                    EncodeSubmission(MessageType.StartNewSession, sessionId, ProducerId, 1, []),
                     timeout.Token);
 
-                FrameHeader candidate = await ReceiveCandidateAsync(stream, timeout.Token);
-                Assert.Equal(MessageType.StartNewSession, candidate.MessageType);
-                Assert.Equal(sessionId, candidate.SessionId);
-                Assert.Equal(1, candidate.SequenceId);
+                await Assert.ThrowsAsync<IOException>(async () => await sequencerTask);
                 await AssertNoMulticastAsync(committed, timeout.Token);
-
-                await stream.SendExactlyAsync(
-                    EncodeInvalidAcknowledgement(invalidAcknowledgement, sessionId),
-                    timeout.Token);
-
-                await Assert.ThrowsAsync<InvalidDataException>(async () => await sequencerTask);
-                await AssertNoMulticastAsync(committed, timeout.Token);
+                Assert.Equal(existingBytes, await File.ReadAllBytesAsync(logPath, timeout.Token));
             }
             finally
             {
@@ -203,53 +172,128 @@ public sealed class SequencerLivePathTests
         }
     }
 
-    private static async Task<FrameHeader> ReceiveAsync(
+    [Fact]
+    public async Task QueuedSubmissionsKeepTheirBytesWhenTheReceiveBufferIsReused()
+    {
+        Assert.SkipWhen(
+            !OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux(),
+            "AF_UNIX integration test requires macOS or Linux.");
+
+        string directory = Path.Combine("/tmp", $"shift-{Guid.NewGuid():N}");
+        string submissionPath = Path.Combine(directory, "in.sock");
+        var group = IPAddress.Parse("239.255.43.3");
+        int port = GetUnusedPort();
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+            using UdpMulticastReceiver committed = new(group, port, IPAddress.Loopback);
+            using UnixDatagramReceiver submissionReceiver = new(submissionPath);
+            using SessionArchive archiver = new(directory);
+            using UdpMulticastSender multicast = new(group, port, IPAddress.Loopback);
+            using UnixDatagramSender submissions = new(submissionPath);
+            var sessionId = Guid.NewGuid();
+            byte[] payload = new byte[FrameCodec.MaximumFrameSize - FrameCodec.MinimumFrameSize];
+            Array.Fill(payload, (byte)0x7f);
+            CanonicalFrame[] expected =
+            [
+                FrameCodec.Encode(MessageType.StartNewSession, sessionId, ProducerId, 1, 1, []),
+                FrameCodec.Encode(MessageType.PlaceOrder, sessionId, ProducerId, 2, 2, payload),
+                FrameCodec.Encode(MessageType.PlaceOrder, sessionId, ProducerId, 3, 3, [0x01, 0x02]),
+                FrameCodec.Encode(MessageType.EndCurrentSession, sessionId, ProducerId, 4, 4, []),
+            ];
+            foreach (CanonicalFrame frame in expected)
+            {
+                await submissions.SendAsync(
+                    EncodeSubmission(
+                        frame.Header.MessageType,
+                        sessionId,
+                        ProducerId,
+                        frame.Header.ProducerSequence,
+                        frame.Payload.Span),
+                    timeout.Token);
+            }
+
+            SequencerServer sequencer = new(submissionReceiver, archiver, multicast);
+            Task sequencerTask = sequencer.RunAsync(timeout.Token);
+            try
+            {
+                List<CanonicalFrame> archived = [];
+                int received = 0;
+                while (true)
+                {
+                    byte[] bytes = await ReceiveAsync(committed, timeout.Token);
+                    Assert.Equal(
+                        OperationStatus.Done,
+                        FrameCodec.TryDecode(bytes, out FrameHeader header, out _));
+                    if (header.MessageType == MessageType.CommitThrough)
+                    {
+                        CanonicalFrame watermark = CommitThroughCodec.Encode(sessionId, received);
+                        Assert.Equal(watermark.Bytes.ToArray(), bytes);
+                        archived.Add(watermark);
+                        if (received == expected.Length)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        Assert.True(received < expected.Length);
+                        Assert.Equal(expected[received].Bytes.ToArray(), bytes);
+                        archived.Add(expected[received++]);
+                    }
+                }
+
+                AssertArchive(Path.Combine(directory, $"{sessionId:N}.shiftlog"), archived);
+            }
+            finally
+            {
+                await CancelAsync(timeout, sequencerTask);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task<byte[]> ReceiveAsync(
         UdpMulticastReceiver receiver,
         CancellationToken cancellationToken)
     {
         byte[] frame = new byte[UnixDatagramReceiver.MaximumDatagramSize];
         int frameLength = await receiver.ReceiveAsync(frame, cancellationToken);
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(
-                frame.AsSpan(0, frameLength),
-                out FrameHeader header,
-                out _));
-        return header;
+        return frame[..frameLength];
     }
 
-    private static void AssertCommit(FrameHeader header, Guid sessionId, long sequenceId)
+    private static void AssertArchive(string path, IEnumerable<CanonicalFrame> frames)
     {
-        Assert.Equal(MessageType.CommitThrough, header.MessageType);
-        Assert.Equal(sessionId, header.SessionId);
-        Assert.Equal(FrameCodec.ControlProducerId, header.ProducerId);
-        Assert.Equal(0uL, header.ProducerSequence);
-        Assert.Equal(sequenceId, header.SequenceId);
-    }
+        using MemoryStream expected = new();
+        Span<byte> marker = stackalloc byte[16];
+        foreach (CanonicalFrame frame in frames)
+        {
+            if (frame.Header.MessageType == MessageType.CommitThrough)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(marker, 0);
+                BinaryPrimitives.WriteInt64BigEndian(marker[4..], frame.Header.SequenceId);
+                BinaryPrimitives.WriteUInt32BigEndian(marker[12..], Crc32C.Compute(marker[..12]));
+                expected.Write(marker);
+            }
+            else
+            {
+                expected.Write(frame.Bytes.Span);
+            }
+        }
 
-    private static async Task<FrameHeader> ReceiveCandidateAsync(
-        UnixStreamSocket stream,
-        CancellationToken cancellationToken)
-    {
-        byte[] prefix = new byte[sizeof(uint)];
-        await stream.ReceiveExactlyAsync(prefix, cancellationToken);
-        Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(prefix));
-
-        await stream.ReceiveExactlyAsync(prefix, cancellationToken);
-        int frameLength = FrameCodec.ReadFrameLength(prefix);
-        byte[] frame = new byte[frameLength];
-        prefix.CopyTo(frame, 0);
-        await stream.ReceiveExactlyAsync(frame.AsMemory(sizeof(uint)), cancellationToken);
-
-        return FrameCodec.DecodeSequencedCandidate(frame).Header;
+        Assert.Equal(expected.ToArray(), File.ReadAllBytes(path));
     }
 
     private static async Task AssertNoMulticastAsync(
         UdpMulticastReceiver receiver,
         CancellationToken cancellationToken)
     {
-        using var silence = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
+        using var silence = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         silence.CancelAfter(TimeSpan.FromMilliseconds(50));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await receiver.ReceiveAsync(
@@ -257,26 +301,16 @@ public sealed class SequencerLivePathTests
                 silence.Token));
     }
 
-    private static async Task CancelAsync(
-        CancellationTokenSource cancellation,
-        params Task[] tasks)
+    private static async Task CancelAsync(CancellationTokenSource cancellation, Task task)
     {
         await cancellation.CancelAsync();
         try
         {
-            await Task.WhenAll(tasks);
+            await task;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
         }
-    }
-
-    private static byte[] EncodeStart(
-        ushort producerId,
-        ulong producerSequence,
-        Guid sessionId)
-    {
-        return EncodeSubmission(MessageType.StartNewSession, sessionId, producerId, producerSequence, []);
     }
 
     private static byte[] EncodeSubmission(
@@ -286,62 +320,7 @@ public sealed class SequencerLivePathTests
         ulong producerSequence,
         ReadOnlySpan<byte> payload)
     {
-        byte[] frame = new byte[FrameCodec.MinimumFrameSize + payload.Length];
-        FrameCodec.Encode(messageType, sessionId, producerId, producerSequence, 0, payload, frame);
-        return frame;
-    }
-
-    private static byte[] EncodeInvalidAcknowledgement(
-        InvalidAcknowledgement invalidAcknowledgement,
-        Guid sessionId)
-    {
-        switch (invalidAcknowledgement)
-        {
-            case InvalidAcknowledgement.Length:
-                byte[] invalidLength = CommitThroughCodec.Encode(sessionId, 1).Bytes.ToArray();
-                BinaryPrimitives.WriteUInt32BigEndian(
-                    invalidLength,
-                    FrameCodec.MinimumFrameSize - 1);
-                return invalidLength;
-            case InvalidAcknowledgement.Checksum:
-                byte[] invalidChecksum = CommitThroughCodec.Encode(sessionId, 1).Bytes.ToArray();
-                invalidChecksum[^1] ^= 0xff;
-                return invalidChecksum;
-            case InvalidAcknowledgement.MessageType:
-                return FrameCodec.Encode(
-                    MessageType.PlaceOrder,
-                    sessionId,
-                    FrameCodec.ControlProducerId,
-                    0,
-                    1,
-                    []).Bytes.ToArray();
-            case InvalidAcknowledgement.ProducerId:
-                return FrameCodec.Encode(MessageType.CommitThrough, sessionId, 1, 0, 1, []).Bytes.ToArray();
-            case InvalidAcknowledgement.ProducerSequence:
-                return FrameCodec.Encode(
-                    MessageType.CommitThrough,
-                    sessionId,
-                    FrameCodec.ControlProducerId,
-                    1,
-                    1,
-                    []).Bytes.ToArray();
-            case InvalidAcknowledgement.Payload:
-                return FrameCodec.Encode(
-                    MessageType.CommitThrough,
-                    sessionId,
-                    FrameCodec.ControlProducerId,
-                    0,
-                    1,
-                    [0x01]).Bytes.ToArray();
-            case InvalidAcknowledgement.HighWater:
-                return CommitThroughCodec.Encode(sessionId, 2).Bytes.ToArray();
-            case InvalidAcknowledgement.SessionId:
-                return CommitThroughCodec.Encode(
-                    new Guid("708192a3-b4c5-d6e7-f809-1a2b3c4d5e6f"),
-                    1).Bytes.ToArray();
-            default:
-                throw new ArgumentOutOfRangeException(nameof(invalidAcknowledgement));
-        }
+        return FrameCodec.Encode(messageType, sessionId, producerId, producerSequence, 0, payload).Bytes.ToArray();
     }
 
     private static int GetUnusedPort()
@@ -349,17 +328,5 @@ public sealed class SequencerLivePathTests
         using Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         return ((IPEndPoint)socket.LocalEndPoint!).Port;
-    }
-
-    public enum InvalidAcknowledgement
-    {
-        Length,
-        Checksum,
-        MessageType,
-        ProducerId,
-        ProducerSequence,
-        Payload,
-        HighWater,
-        SessionId,
     }
 }

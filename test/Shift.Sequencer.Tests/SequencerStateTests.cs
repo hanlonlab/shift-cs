@@ -33,10 +33,10 @@ public class SequencerStateTests
 
         Assert.Equal(SubmissionStatus.Accepted, start.Status);
         Assert.False(start.ForceCommit);
-        Assert.Equal(1, DecodeHeader(start.Frame.Span).SequenceId);
+        Assert.Equal(1, DecodeHeader(start.Frame.Bytes.Span).SequenceId);
         Assert.Equal(SubmissionStatus.Accepted, order.Status);
         Assert.False(order.ForceCommit);
-        FrameHeader orderHeader = DecodeHeader(order.Frame.Span);
+        FrameHeader orderHeader = DecodeHeader(order.Frame.Bytes.Span);
         Assert.Equal(_firstSessionId, orderHeader.SessionId);
         Assert.Equal(2, orderHeader.SequenceId);
         Assert.Equal(2, state.LastAcceptedSequence);
@@ -95,7 +95,7 @@ public class SequencerStateTests
             []));
 
         Assert.True(end.ForceCommit);
-        Assert.Equal(2, DecodeHeader(end.Frame.Span).SequenceId);
+        Assert.Equal(2, DecodeHeader(end.Frame.Bytes.Span).SequenceId);
         Assert.Throws<InvalidOperationException>(() =>
             state.Submit(EncodeSubmission(
                 MessageType.PlaceOrder,
@@ -115,7 +115,7 @@ public class SequencerStateTests
             3,
             new Guid("90a1b2c3-d4e5-f607-1829-3a4b5c6d7e8f")));
 
-        Assert.Equal(1, DecodeHeader(nextStart.Frame.Span).SequenceId);
+        Assert.Equal(1, DecodeHeader(nextStart.Frame.Bytes.Span).SequenceId);
         Assert.Equal(1, state.LastAcceptedSequence);
     }
 
@@ -159,9 +159,9 @@ public class SequencerStateTests
 
         Assert.Equal(SubmissionStatus.Accepted, accepted.Status);
         Assert.Equal(SubmissionStatus.PendingDuplicate, duplicate.Status);
-        Assert.True(duplicate.Frame.IsEmpty);
+        Assert.True(duplicate.Frame.Bytes.IsEmpty);
         Assert.False(duplicate.ForceCommit);
-        Assert.Equal(2, DecodeHeader(next.Frame.Span).SequenceId);
+        Assert.Equal(2, DecodeHeader(next.Frame.Bytes.Span).SequenceId);
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public class SequencerStateTests
         SubmissionResult duplicate = state.Submit(submission);
 
         Assert.Equal(SubmissionStatus.CommittedDuplicate, duplicate.Status);
-        Assert.Equal(accepted.Frame.ToArray(), duplicate.Frame.ToArray());
+        Assert.Equal(accepted.Frame.Bytes.ToArray(), duplicate.Frame.Bytes.ToArray());
         Assert.False(duplicate.ForceCommit);
     }
 
@@ -205,7 +205,7 @@ public class SequencerStateTests
 
         SubmissionResult committed = state.Submit(second);
         Assert.Equal(SubmissionStatus.CommittedDuplicate, committed.Status);
-        Assert.True(committed.Frame.IsEmpty);
+        Assert.True(committed.Frame.Bytes.IsEmpty);
     }
 
     [Fact]
@@ -251,8 +251,8 @@ public class SequencerStateTests
             2,
             [0x02]));
 
-        Assert.Equal(2, DecodeHeader(second.Frame.Span).SequenceId);
-        Assert.Equal(3, DecodeHeader(firstNext.Frame.Span).SequenceId);
+        Assert.Equal(2, DecodeHeader(second.Frame.Bytes.Span).SequenceId);
+        Assert.Equal(3, DecodeHeader(firstNext.Frame.Bytes.Span).SequenceId);
         Assert.Equal(
             SubmissionStatus.PendingDuplicate,
             state.Submit(EncodeSubmission(
@@ -329,7 +329,7 @@ public class SequencerStateTests
             1,
             _secondSessionId));
         Assert.Equal(SubmissionStatus.Accepted, nextStart.Status);
-        Assert.Equal(1, DecodeHeader(nextStart.Frame.Span).SequenceId);
+        Assert.Equal(1, DecodeHeader(nextStart.Frame.Bytes.Span).SequenceId);
 
         SubmissionResult nextOrder = state.Submit(EncodeSubmission(
             MessageType.PlaceOrder,
@@ -339,7 +339,7 @@ public class SequencerStateTests
             []));
 
         Assert.Equal(SubmissionStatus.Accepted, nextOrder.Status);
-        Assert.Equal(2, DecodeHeader(nextOrder.Frame.Span).SequenceId);
+        Assert.Equal(2, DecodeHeader(nextOrder.Frame.Bytes.Span).SequenceId);
     }
 
     [Fact]
@@ -370,7 +370,7 @@ public class SequencerStateTests
             FirstProducerId,
             2,
             []));
-        FrameHeader currentHeader = DecodeHeader(current.Frame.Span);
+        FrameHeader currentHeader = DecodeHeader(current.Frame.Bytes.Span);
         Assert.Equal(SubmissionStatus.Accepted, current.Status);
         Assert.Equal(_secondSessionId, currentHeader.SessionId);
         Assert.Equal(2, currentHeader.SequenceId);

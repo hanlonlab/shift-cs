@@ -20,7 +20,7 @@ All multibyte values use big-endian byte order. `FrameLength` includes the heade
 
 Payload length is `FrameLength - 45`. Minimum frame size is 45 bytes, maximum frame size is 2,048 bytes, and maximum payload size is 2,003 bytes. This pre-production layout remains version 1.
 
-Every frame carries a nonempty 16-byte, big-endian session ID. Producer ID 0 is reserved for Archiver control frames. Submissions use a nonzero producer ID and a nonzero producer sequence. Session sequence 0 marks an unsequenced submission.
+Every frame carries a nonempty 16-byte, big-endian session ID. Producer ID 0 is reserved for commit control frames. Submissions use a nonzero producer ID and a nonzero producer sequence. Session sequence 0 marks an unsequenced submission.
 
 Each encoded buffer contains exactly one frame. Trailing bytes are invalid.
 
