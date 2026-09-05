@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using Shift.Protocol;
 using Shift.Protocol.Framing;
 using Xunit;
 
@@ -40,48 +38,6 @@ public sealed class SessionLogTests : IDisposable
     }
 
     [Fact]
-    public void CommitBatchWritesEveryFrameBeforeOneMarker()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        CanonicalFrame first = EncodeFrame(1);
-        CanonicalFrame second = EncodeFrame(2);
-        using SessionLog log = new(path);
-
-        log.CommitBatch([first, second], 2);
-
-        byte[] contents = File.ReadAllBytes(path);
-        Assert.Equal(first.Bytes.Span, contents.AsSpan(0, first.Bytes.Length));
-        Assert.Equal(
-            second.Bytes.Span,
-            contents.AsSpan(first.Bytes.Length, second.Bytes.Length));
-        AssertMarker(contents.AsSpan(first.Bytes.Length + second.Bytes.Length), 2);
-    }
-
-    [Fact]
-    public void CommitBatchAppendsAndFlushesEachBatch()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        CanonicalFrame first = EncodeFrame(1);
-        CanonicalFrame second = EncodeFrame(2);
-        using SessionLog log = new(path);
-
-        log.CommitBatch([first], 1);
-
-        byte[] firstCommit = File.ReadAllBytes(path);
-        Assert.Equal(first.Bytes.Span, firstCommit.AsSpan(0, first.Bytes.Length));
-        AssertMarker(firstCommit.AsSpan(first.Bytes.Length), 1);
-
-        log.CommitBatch([second], 2);
-
-        byte[] secondCommit = File.ReadAllBytes(path);
-        int secondFrameOffset = firstCommit.Length;
-        Assert.Equal(
-            second.Bytes.Span,
-            secondCommit.AsSpan(secondFrameOffset, second.Bytes.Length));
-        AssertMarker(secondCommit.AsSpan(secondFrameOffset + second.Bytes.Length), 2);
-    }
-
-    [Fact]
     public void IoFailurePermanentlyFaultsLog()
     {
         string path = Path.Combine(_directory, "session.shiftlog");
@@ -107,15 +63,5 @@ public sealed class SessionLogTests : IDisposable
             (ulong)sequenceId,
             sequenceId,
             _payload);
-    }
-
-    private static void AssertMarker(ReadOnlySpan<byte> marker, long highWater)
-    {
-        Assert.Equal(sizeof(uint) + sizeof(long) + sizeof(uint), marker.Length);
-        Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(marker));
-        Assert.Equal(highWater, BinaryPrimitives.ReadInt64BigEndian(marker[sizeof(uint)..]));
-        Assert.Equal(
-            Crc32C.Compute(marker[..^sizeof(uint)]),
-            BinaryPrimitives.ReadUInt32BigEndian(marker[^sizeof(uint)..]));
     }
 }

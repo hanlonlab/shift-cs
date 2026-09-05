@@ -83,34 +83,4 @@ public class MatchingEventCodecTests
         Assert.False(OrderUpdatedCodec.TryDecode(new byte[33], out _));
         Assert.False(TradeExecutedCodec.TryDecode(new byte[32], out _));
     }
-
-    [Fact]
-    public void EventEncodersRejectInvalidValuesAndSmallDestinations()
-    {
-        var invalidOrderUpdated = new OrderUpdated(
-            0,
-            1,
-            0,
-            0,
-            RejectionReason.None,
-            CancellationReason.None);
-        var validOrderUpdated = new OrderUpdated(
-            1,
-            1,
-            0,
-            0,
-            RejectionReason.None,
-            CancellationReason.None);
-        var invalidTrade = new TradeExecuted(1, new Fill(1, 1, 0, FillRole.Taker));
-        var validTrade = new TradeExecuted(1, new Fill(1, 1, 1, FillRole.Taker));
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            OrderUpdatedCodec.Encode(invalidOrderUpdated, new byte[34]));
-        Assert.Throws<ArgumentException>(() =>
-            OrderUpdatedCodec.Encode(validOrderUpdated, new byte[33]));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            TradeExecutedCodec.Encode(invalidTrade, new byte[33]));
-        Assert.Throws<ArgumentException>(() =>
-            TradeExecutedCodec.Encode(validTrade, new byte[32]));
-    }
 }

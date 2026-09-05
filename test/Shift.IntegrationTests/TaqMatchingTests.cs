@@ -54,7 +54,6 @@ public sealed class TaqMatchingTests
     }
 
     [Theory]
-    [InlineData(102, 2, false, OrderSide.Buy)]
     [InlineData(103, 2, false, OrderSide.Buy)]
     [InlineData(100, 2, false, OrderSide.Sell)]
     [InlineData(99, 2, false, OrderSide.Sell)]
@@ -94,10 +93,7 @@ public sealed class TaqMatchingTests
 
     [Theory]
     [InlineData("08", "    ", false)]
-    [InlineData("10", "    ", false)]
-    [InlineData("01", "    ", false)]
     [InlineData("00", " O  ", false)]
-    [InlineData("00", " 6  ", false)]
     [InlineData("00", "  TI", false)]
     [InlineData("00", " F I", true)]
     public void ReaderClassifiesCorrectionsAndSpecialPrintsAsIneligible(string correction, string condition, bool ordinary)

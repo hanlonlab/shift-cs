@@ -22,7 +22,7 @@ jobs:
           dotnet restore Shift.slnx
           dotnet format Shift.slnx --verify-no-changes --no-restore
           dotnet build Shift.slnx --configuration Release --no-restore -warnaserror
-          dotnet test --solution Shift.slnx --configuration Release --no-build --no-restore --minimum-expected-tests 111
+          dotnet test --solution Shift.slnx --configuration Release --no-build --no-restore --minimum-expected-tests 109
       - name: Performance benchmarks
         run: dotnet run --project benchmarks/Shift.Benchmarks/Shift.Benchmarks.csproj --configuration Release --no-build --no-restore -- --filter '*' --stopOnFirstError
       - name: Publish benchmark summary

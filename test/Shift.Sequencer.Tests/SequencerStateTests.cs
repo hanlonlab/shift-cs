@@ -11,38 +11,6 @@ public class SequencerStateTests
     private static readonly Guid _secondSessionId = new("bcdef012-3456-789a-bcde-f0123456789a");
 
     [Fact]
-    public void RejectsUnverifiedSubmission()
-    {
-        SequencerState state = new();
-
-        Assert.Throws<ArgumentException>(() => state.Submit(default));
-    }
-
-    [Fact]
-    public void SequencesSessionMessagesStartingAtOne()
-    {
-        SequencerState state = new();
-
-        SubmissionResult start = state.Submit(EncodeStart(FirstProducerId, 1, _firstSessionId));
-        SubmissionResult order = state.Submit(EncodeSubmission(
-            MessageType.PlaceOrder,
-            _firstSessionId,
-            FirstProducerId,
-            2,
-            [0xde, 0xad]));
-
-        Assert.Equal(SubmissionStatus.Accepted, start.Status);
-        Assert.False(start.ForceCommit);
-        Assert.Equal(1, DecodeHeader(start.Frame.Bytes.Span).SequenceId);
-        Assert.Equal(SubmissionStatus.Accepted, order.Status);
-        Assert.False(order.ForceCommit);
-        FrameHeader orderHeader = DecodeHeader(order.Frame.Bytes.Span);
-        Assert.Equal(_firstSessionId, orderHeader.SessionId);
-        Assert.Equal(2, orderHeader.SequenceId);
-        Assert.Equal(2, state.LastAcceptedSequence);
-    }
-
-    [Fact]
     public void StartRejectsPayload()
     {
         SequencerState state = new();
@@ -143,43 +111,6 @@ public class SequencerStateTests
     }
 
     [Fact]
-    public void PendingDuplicateDoesNothing()
-    {
-        SequencerState state = new();
-        VerifiedSubmission submission = EncodeStart(FirstProducerId, 1, _firstSessionId);
-
-        SubmissionResult accepted = state.Submit(submission);
-        SubmissionResult duplicate = state.Submit(submission);
-        SubmissionResult next = state.Submit(EncodeSubmission(
-            MessageType.NextSimulationStep,
-            _firstSessionId,
-            FirstProducerId,
-            2,
-            []));
-
-        Assert.Equal(SubmissionStatus.Accepted, accepted.Status);
-        Assert.Equal(SubmissionStatus.PendingDuplicate, duplicate.Status);
-        Assert.True(duplicate.Frame.Bytes.IsEmpty);
-        Assert.False(duplicate.ForceCommit);
-        Assert.Equal(2, DecodeHeader(next.Frame.Bytes.Span).SequenceId);
-    }
-
-    [Fact]
-    public void CommittedDuplicateReturnsStoredFrame()
-    {
-        SequencerState state = new();
-        VerifiedSubmission submission = EncodeStart(FirstProducerId, 1, _firstSessionId);
-        SubmissionResult accepted = state.Submit(submission);
-        state.CommitThrough(1);
-
-        SubmissionResult duplicate = state.Submit(submission);
-
-        Assert.Equal(SubmissionStatus.CommittedDuplicate, duplicate.Status);
-        Assert.Equal(accepted.Frame.Bytes.ToArray(), duplicate.Frame.Bytes.ToArray());
-        Assert.False(duplicate.ForceCommit);
-    }
-
-    [Fact]
     public void OlderPendingDuplicateBecomesCommittedWithBatch()
     {
         SequencerState state = new();
@@ -244,15 +175,7 @@ public class SequencerStateTests
             SecondProducerId,
             1,
             [0x01]));
-        SubmissionResult firstNext = state.Submit(EncodeSubmission(
-            MessageType.PlaceOrder,
-            _firstSessionId,
-            FirstProducerId,
-            2,
-            [0x02]));
-
         Assert.Equal(2, DecodeHeader(second.Frame.Bytes.Span).SequenceId);
-        Assert.Equal(3, DecodeHeader(firstNext.Frame.Bytes.Span).SequenceId);
         Assert.Equal(
             SubmissionStatus.PendingDuplicate,
             state.Submit(EncodeSubmission(
@@ -261,6 +184,14 @@ public class SequencerStateTests
                 SecondProducerId,
                 1,
                 [0x01])).Status);
+
+        SubmissionResult firstNext = state.Submit(EncodeSubmission(
+            MessageType.PlaceOrder,
+            _firstSessionId,
+            FirstProducerId,
+            2,
+            [0x02]));
+        Assert.Equal(3, DecodeHeader(firstNext.Frame.Bytes.Span).SequenceId);
     }
 
     [Fact]

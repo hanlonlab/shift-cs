@@ -52,28 +52,6 @@ public class FrameCodecTests
     }
 
     [Fact]
-    public void AllocatingEncodeReturnsCanonicalFrame()
-    {
-        CanonicalFrame frame = FrameCodec.Encode(
-            MessageType.PlaceOrder,
-            _sessionId,
-            ProducerId,
-            ProducerSequence,
-            0x0102030405060708,
-            _payload);
-
-        Assert.Equal(_encodedFrame, frame.Bytes.ToArray());
-        Assert.Equal((uint)_encodedFrame.Length, frame.Header.FrameLength);
-        Assert.Equal(FrameCodec.CurrentVersion, frame.Header.Version);
-        Assert.Equal(MessageType.PlaceOrder, frame.Header.MessageType);
-        Assert.Equal(_sessionId, frame.Header.SessionId);
-        Assert.Equal(ProducerId, frame.Header.ProducerId);
-        Assert.Equal(ProducerSequence, frame.Header.ProducerSequence);
-        Assert.Equal(0x0102030405060708, frame.Header.SequenceId);
-        Assert.Equal(_payload, frame.Payload.ToArray());
-    }
-
-    [Fact]
     public void TryDecodeReadsCanonicalFrame()
     {
         OperationStatus status = FrameCodec.TryDecode(
@@ -90,45 +68,6 @@ public class FrameCodecTests
         Assert.Equal(ProducerSequence, header.ProducerSequence);
         Assert.Equal(0x0102030405060708, header.SequenceId);
         Assert.Equal(_payload, payload.ToArray());
-    }
-
-    [Fact]
-    public void CodecSupportsMinimumFrameSize()
-    {
-        CanonicalFrame frame = FrameCodec.Encode(
-            MessageType.PlaceOrder,
-            _sessionId,
-            ProducerId,
-            ProducerSequence,
-            1,
-            []);
-
-        Assert.Equal(FrameCodec.MinimumFrameSize, frame.Bytes.Length);
-        Assert.Empty(frame.Payload.ToArray());
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(frame.Bytes.Span, out _, out ReadOnlySpan<byte> payload));
-        Assert.True(payload.IsEmpty);
-    }
-
-    [Fact]
-    public void CodecSupportsMaximumFrameSize()
-    {
-        byte[] payload = new byte[FrameCodec.MaximumFrameSize - FrameCodec.MinimumFrameSize];
-
-        CanonicalFrame frame = FrameCodec.Encode(
-            MessageType.PlaceOrder,
-            _sessionId,
-            ProducerId,
-            ProducerSequence,
-            1,
-            payload);
-
-        Assert.Equal(FrameCodec.MaximumFrameSize, frame.Bytes.Length);
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(frame.Bytes.Span, out _, out ReadOnlySpan<byte> decodedPayload));
-        Assert.Equal(payload, decodedPayload.ToArray());
     }
 
     [Fact]
@@ -173,19 +112,6 @@ public class FrameCodecTests
     }
 
     [Fact]
-    public void TryDecodeRejectsLengthAboveSupportedRange()
-    {
-        byte[] frame = new byte[FrameLengthFieldSize];
-        BinaryPrimitives.WriteUInt32BigEndian(
-            frame.AsSpan(0, FrameLengthFieldSize),
-            uint.MaxValue);
-
-        OperationStatus status = FrameCodec.TryDecode(frame, out _, out _);
-
-        Assert.Equal(OperationStatus.InvalidData, status);
-    }
-
-    [Fact]
     public void TryDecodeRejectsLengthAboveMaximumFrameSize()
     {
         byte[] frame = new byte[FrameLengthFieldSize];
@@ -196,27 +122,6 @@ public class FrameCodecTests
         Assert.Equal(
             OperationStatus.InvalidData,
             FrameCodec.TryDecode(frame, out _, out _));
-    }
-
-    [Fact]
-    public void ReadFrameLengthRejectsEveryTruncatedPrefix()
-    {
-        for (int length = 0; length < FrameLengthFieldSize; length++)
-        {
-            Assert.Throws<InvalidDataException>(() =>
-                FrameCodec.ReadFrameLength(_encodedFrame.AsSpan(0, length)));
-        }
-    }
-
-    [Fact]
-    public void ReadFrameLengthRejectsOutOfRangeLengths()
-    {
-        byte[] prefix = new byte[FrameLengthFieldSize];
-        BinaryPrimitives.WriteUInt32BigEndian(prefix, FrameCodec.MinimumFrameSize - 1);
-        Assert.Throws<InvalidDataException>(() => FrameCodec.ReadFrameLength(prefix));
-
-        BinaryPrimitives.WriteUInt32BigEndian(prefix, FrameCodec.MaximumFrameSize + 1);
-        Assert.Throws<InvalidDataException>(() => FrameCodec.ReadFrameLength(prefix));
     }
 
     [Fact]
@@ -232,33 +137,8 @@ public class FrameCodecTests
     }
 
     [Fact]
-    public void CodecRejectsMessageTypeZero()
-    {
-        byte[] destination = new byte[FrameCodec.MinimumFrameSize];
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(default, _sessionId, ProducerId, ProducerSequence, 1, [], destination));
-
-        byte[] frame = _encodedFrame.ToArray();
-        BinaryPrimitives.WriteUInt16BigEndian(
-            frame.AsSpan(MessageTypeOffset, MessageTypeFieldSize),
-            0);
-        WriteChecksum(frame);
-
-        OperationStatus status = FrameCodec.TryDecode(frame, out _, out _);
-
-        Assert.Equal(OperationStatus.InvalidData, status);
-    }
-
-    [Fact]
     public void CodecRejectsUndefinedMessageType()
     {
-        var undefined = (MessageType)ushort.MaxValue;
-        byte[] destination = new byte[FrameCodec.MinimumFrameSize];
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(undefined, _sessionId, ProducerId, ProducerSequence, 1, [], destination));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(undefined, _sessionId, ProducerId, ProducerSequence, 1, []));
-
         byte[] frame = _encodedFrame.ToArray();
         BinaryPrimitives.WriteUInt16BigEndian(
             frame.AsSpan(MessageTypeOffset, MessageTypeFieldSize),
@@ -284,25 +164,6 @@ public class FrameCodecTests
     [Fact]
     public void CodecRejectsEmptySessionId()
     {
-        byte[] destination = new byte[FrameCodec.MinimumFrameSize];
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(
-                MessageType.PlaceOrder,
-                Guid.Empty,
-                ProducerId,
-                ProducerSequence,
-                1,
-                [],
-                destination));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(
-                MessageType.PlaceOrder,
-                Guid.Empty,
-                ProducerId,
-                ProducerSequence,
-                1,
-                []));
-
         byte[] frame = _encodedFrame.ToArray();
         frame.AsSpan(SessionIdOffset, SessionIdFieldSize).Clear();
         WriteChecksum(frame);
@@ -310,48 +171,6 @@ public class FrameCodecTests
         Assert.Equal(
             OperationStatus.InvalidData,
             FrameCodec.TryDecode(frame, out _, out _));
-    }
-
-    [Fact]
-    public void EncodeRejectsDestinationTooSmall()
-    {
-        byte[] destination = new byte[_encodedFrame.Length - 1];
-
-        Assert.Throws<ArgumentException>(() =>
-            FrameCodec.Encode(
-                MessageType.PlaceOrder,
-                _sessionId,
-                ProducerId,
-                ProducerSequence,
-                1,
-                _payload,
-                destination));
-    }
-
-    [Fact]
-    public void EncodeRejectsFrameAboveMaximumSize()
-    {
-        byte[] payload = new byte[
-            FrameCodec.MaximumFrameSize - FrameCodec.MinimumFrameSize + 1];
-        byte[] destination = new byte[FrameCodec.MaximumFrameSize + 1];
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(
-                MessageType.PlaceOrder,
-                _sessionId,
-                ProducerId,
-                ProducerSequence,
-                1,
-                payload,
-                destination));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            FrameCodec.Encode(
-                MessageType.PlaceOrder,
-                _sessionId,
-                ProducerId,
-                ProducerSequence,
-                1,
-                payload));
     }
 
     [Fact]

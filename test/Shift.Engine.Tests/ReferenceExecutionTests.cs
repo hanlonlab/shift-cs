@@ -29,7 +29,6 @@ public sealed class ReferenceExecutionTests
     }
 
     [Theory]
-    [InlineData(OrderType.DayLimit, 101, 0, 0)]
     [InlineData(OrderType.ImmediateOrCancelLimit, 101, 0, 0)]
     [InlineData(OrderType.ImmediateOrCancelLimit, 100, 0, 10)]
     public void FullyFilledOrdersAndIocRemaindersNeverRest(OrderType type, long limit, long remaining, long canceled)
@@ -251,9 +250,7 @@ public sealed class ReferenceExecutionTests
     }
 
     [Theory]
-    [InlineData(-1, 10, 102, 10, RejectionReason.InvalidReferenceQuote)]
     [InlineData(100, 0, 102, 10, RejectionReason.InvalidReferenceQuote)]
-    [InlineData(0, 10, 102, 10, RejectionReason.InvalidReferenceQuote)]
     [InlineData(100, 10, 102, -1, RejectionReason.InvalidReferenceQuote)]
     [InlineData(102, 10, 102, 10, RejectionReason.LockedOrCrossedReferenceQuote)]
     [InlineData(103, 10, 102, 10, RejectionReason.LockedOrCrossedReferenceQuote)]

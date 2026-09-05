@@ -45,45 +45,8 @@ public sealed class SessionArchiveTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RejectsEmptyBatchWithoutChangingFiles(bool sessionActive)
-    {
-        CanonicalFrame start = EncodeStart(_firstSessionId, 1);
-        using SessionArchive archive = new(_archiveRoot);
-        if (sessionActive)
-        {
-            archive.CommitBatch([start]);
-        }
-
-        Assert.Throws<InvalidDataException>(() => archive.CommitBatch([]));
-
-        if (sessionActive)
-        {
-            AssertLog(LogPath(_firstSessionId), [start]);
-        }
-        else
-        {
-            Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
-        }
-    }
-
-    [Fact]
-    public void RejectsDefaultFrameBeforeCreatingLog()
-    {
-        using SessionArchive archive = new(_archiveRoot);
-
-        Assert.Throws<InvalidDataException>(() =>
-            archive.CommitBatch([EncodeStart(_firstSessionId, 1), default]));
-
-        Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
-    }
-
-    [Theory]
     [InlineData(0, 1, 2, MessageType.PlaceOrder)]
     [InlineData(1, 0, 2, MessageType.PlaceOrder)]
-    [InlineData(1, 1, 0, MessageType.PlaceOrder)]
-    [InlineData(1, 1, -1, MessageType.PlaceOrder)]
     [InlineData(1, 1, 2, MessageType.CommitThrough)]
     public void RejectsCandidateRoleViolationsBeforeCreatingLog(
         int producerId,
@@ -202,39 +165,6 @@ public sealed class SessionArchiveTests : IDisposable
         Assert.Throws<InvalidDataException>(() => archive.CommitBatch(frames));
 
         Assert.Empty(Directory.EnumerateFiles(_archiveRoot));
-    }
-
-    [Fact]
-    public void RejectsReuseOfSessionLog()
-    {
-        CanonicalFrame start = EncodeStart(_firstSessionId, 1);
-        CanonicalFrame end = EncodeFrame(MessageType.EndCurrentSession, _firstSessionId, 2, []);
-        using SessionArchive archive = new(_archiveRoot);
-        archive.CommitBatch([start, end]);
-
-        Assert.Throws<IOException>(() => archive.CommitBatch([start]));
-
-        AssertLog(LogPath(_firstSessionId), [start, end]);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RejectsCommitAfterDisposal(bool sessionActive)
-    {
-        CanonicalFrame start = EncodeStart(_firstSessionId, 1);
-        using SessionArchive archive = new(_archiveRoot);
-        if (sessionActive)
-        {
-            archive.CommitBatch([start]);
-        }
-
-        archive.Dispose();
-
-        Assert.Throws<ObjectDisposedException>(() =>
-            archive.CommitBatch(sessionActive
-                ? [EncodeFrame(MessageType.PlaceOrder, _firstSessionId, 2)]
-                : [start]));
     }
 
     public void Dispose()

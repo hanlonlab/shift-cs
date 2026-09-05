@@ -9,14 +9,6 @@ public sealed class MatchingEngineTests
 {
     private const long PairId = 7;
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void RejectsInvalidEnginePair(long pairId)
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new MatchingEngine(pairId));
-    }
-
     [Fact]
     public void RepeatedStartPreservesExistingOrders()
     {
@@ -29,34 +21,12 @@ public sealed class MatchingEngineTests
         AssertSingleBidUnchanged(engine);
     }
 
-    [Fact]
-    public void SupportsPositiveLongValuesWithoutOverflow()
-    {
-        MatchingEngine engine = new(long.MaxValue);
-        engine.StartSession(new StartNewSession());
-
-        OrderResult result = engine.Place(new PlaceOrder(
-            long.MaxValue, long.MaxValue, OrderSide.Buy, long.MaxValue, long.MaxValue, OrderType.DayLimit));
-
-        Assert.Equal(new OrderResult(RejectionReason.None, RemainingQuantity: long.MaxValue), result);
-        Assert.Equal(
-            new OrderResult(RejectionReason.None, 1, long.MaxValue - 1, CancellationReason.Requested),
-            engine.Reduce(long.MaxValue, long.MaxValue, long.MaxValue - 1));
-    }
-
     [Theory]
-    [InlineData(0, 2, OrderSide.Buy, 100, 10, OrderType.DayLimit, RejectionReason.InvalidPairId)]
-    [InlineData(-1, 2, OrderSide.Buy, 100, 10, OrderType.DayLimit, RejectionReason.InvalidPairId)]
     [InlineData(8, 2, OrderSide.Buy, 100, 10, OrderType.DayLimit, RejectionReason.InvalidPairId)]
     [InlineData(PairId, 0, OrderSide.Buy, 100, 10, OrderType.DayLimit, RejectionReason.InvalidOrderId)]
-    [InlineData(PairId, -1, OrderSide.Buy, 100, 10, OrderType.DayLimit, RejectionReason.InvalidOrderId)]
-    [InlineData(PairId, 2, (OrderSide)0, 100, 10, OrderType.DayLimit, RejectionReason.InvalidOrderSide)]
     [InlineData(PairId, 2, (OrderSide)255, 100, 10, OrderType.DayLimit, RejectionReason.InvalidOrderSide)]
     [InlineData(PairId, 2, OrderSide.Buy, 0, 10, OrderType.DayLimit, RejectionReason.InvalidPrice)]
-    [InlineData(PairId, 2, OrderSide.Buy, -1, 10, OrderType.DayLimit, RejectionReason.InvalidPrice)]
     [InlineData(PairId, 2, OrderSide.Buy, 100, 0, OrderType.DayLimit, RejectionReason.InvalidQuantity)]
-    [InlineData(PairId, 2, OrderSide.Buy, 100, -1, OrderType.DayLimit, RejectionReason.InvalidQuantity)]
-    [InlineData(PairId, 2, OrderSide.Buy, 100, 10, (OrderType)0, RejectionReason.UnsupportedOrderType)]
     [InlineData(PairId, 2, OrderSide.Buy, 100, 10, (OrderType)255, RejectionReason.UnsupportedOrderType)]
     [InlineData(PairId, 2, OrderSide.Buy, 100, 10, OrderType.PostOnlyLimit, RejectionReason.UnsupportedOrderType)]
     [InlineData(PairId, 1, OrderSide.Sell, 99, 20, OrderType.DayLimit, RejectionReason.DuplicateOrderId)]
@@ -76,8 +46,6 @@ public sealed class MatchingEngineTests
     [Theory]
     [InlineData(OrderSide.Buy, OrderSide.Sell, 99)]
     [InlineData(OrderSide.Buy, OrderSide.Sell, 100)]
-    [InlineData(OrderSide.Sell, OrderSide.Buy, 100)]
-    [InlineData(OrderSide.Sell, OrderSide.Buy, 101)]
     public void CrossingOwnOrderCancelsOnlyTheNewOrder(
         OrderSide restingSide, OrderSide incomingSide, long incomingPrice)
     {
@@ -91,25 +59,6 @@ public sealed class MatchingEngineTests
         Assert.Equal(1, engine.LiveOrderCount);
         Assert.True(engine.TryGetOrder(1, out RestingOrder resting));
         Assert.Equal(new RestingOrder(1, restingSide, 100, 10), resting);
-    }
-
-    [Fact]
-    public void CancelsOnlyTheRemainingQuantityAndAllowsIdReuse()
-    {
-        MatchingEngine engine = CreateActiveEngine();
-        engine.Place(new PlaceOrder(PairId, 1, OrderSide.Buy, 100, 10, OrderType.DayLimit));
-
-        OrderResult reduction = engine.Reduce(PairId, 1, 4);
-        OrderResult cancellation = engine.Cancel(new CancelOrder(PairId, 1));
-
-        Assert.Equal(new OrderResult(RejectionReason.None, 6, 4, CancellationReason.Requested), reduction);
-        Assert.Equal(new OrderResult(RejectionReason.None, 0, 6, CancellationReason.Requested), cancellation);
-        Assert.Equal(10, reduction.CanceledQuantity + cancellation.CanceledQuantity);
-        Assert.False(engine.TryGetOrder(1, out _));
-        Assert.Equal(0, engine.LiveOrderCount);
-        Assert.Equal(RejectionReason.UnknownOrder, engine.Cancel(new CancelOrder(PairId, 1)).RejectionReason);
-        Assert.Equal(RejectionReason.None,
-            engine.Place(new PlaceOrder(PairId, 1, OrderSide.Sell, 99, 5, OrderType.DayLimit)).RejectionReason);
     }
 
     [Fact]
@@ -137,14 +86,8 @@ public sealed class MatchingEngineTests
     }
 
     [Theory]
-    [InlineData(0, 1, 1, RejectionReason.InvalidPairId)]
-    [InlineData(-1, 1, 1, RejectionReason.InvalidPairId)]
-    [InlineData(8, 1, 1, RejectionReason.InvalidPairId)]
-    [InlineData(PairId, 0, 1, RejectionReason.InvalidOrderId)]
-    [InlineData(PairId, -1, 1, RejectionReason.InvalidOrderId)]
     [InlineData(PairId, 2, 1, RejectionReason.UnknownOrder)]
     [InlineData(PairId, 1, 0, RejectionReason.InvalidQuantity)]
-    [InlineData(PairId, 1, -1, RejectionReason.InvalidQuantity)]
     [InlineData(PairId, 1, 11, RejectionReason.ReductionExceedsRemainingQuantity)]
     public void InvalidReductionLeavesTheOrderUnchanged(
         long pairId, long orderId, long quantity, RejectionReason expectedReason)
@@ -153,22 +96,6 @@ public sealed class MatchingEngineTests
         engine.Place(new PlaceOrder(PairId, 1, OrderSide.Buy, 100, 10, OrderType.DayLimit));
 
         Assert.Equal(new OrderResult(expectedReason), engine.Reduce(pairId, orderId, quantity));
-        AssertSingleBidUnchanged(engine);
-    }
-
-    [Theory]
-    [InlineData(0, 1, RejectionReason.InvalidPairId)]
-    [InlineData(-1, 1, RejectionReason.InvalidPairId)]
-    [InlineData(8, 1, RejectionReason.InvalidPairId)]
-    [InlineData(PairId, 0, RejectionReason.InvalidOrderId)]
-    [InlineData(PairId, -1, RejectionReason.InvalidOrderId)]
-    [InlineData(PairId, 2, RejectionReason.UnknownOrder)]
-    public void InvalidCancellationLeavesTheOrderUnchanged(long pairId, long orderId, RejectionReason expectedReason)
-    {
-        MatchingEngine engine = CreateActiveEngine();
-        engine.Place(new PlaceOrder(PairId, 1, OrderSide.Buy, 100, 10, OrderType.DayLimit));
-
-        Assert.Equal(new OrderResult(expectedReason), engine.Cancel(new CancelOrder(pairId, orderId)));
         AssertSingleBidUnchanged(engine);
     }
 

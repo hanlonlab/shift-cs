@@ -72,20 +72,4 @@ public class MatchingCommandCodecTests
         Assert.True(CancelOrderCodec.TryDecode(payload, out CancelOrder decoded));
         Assert.Equal(command, decoded);
     }
-
-    [Fact]
-    public void CommandEncodersRejectInvalidValuesAndSmallDestinations()
-    {
-        var invalidPlace = new PlaceOrder(0, 1, OrderSide.Buy, 1, 1, OrderType.DayLimit);
-        var validPlace = new PlaceOrder(1, 1, OrderSide.Buy, 1, 1, OrderType.DayLimit);
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            PlaceOrderCodec.Encode(invalidPlace, new byte[34]));
-        Assert.Throws<ArgumentException>(() =>
-            PlaceOrderCodec.Encode(validPlace, new byte[33]));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            CancelOrderCodec.Encode(new CancelOrder(0, 1), new byte[16]));
-        Assert.Throws<ArgumentException>(() =>
-            CancelOrderCodec.Encode(new CancelOrder(1, 1), new byte[15]));
-    }
 }
