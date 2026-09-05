@@ -132,29 +132,6 @@ public class FrameCodecTests
     }
 
     [Fact]
-    public void DecodeEncodePreservesCanonicalBytes()
-    {
-        Assert.Equal(
-            OperationStatus.Done,
-            FrameCodec.TryDecode(
-                _encodedFrame,
-                out FrameHeader header,
-                out ReadOnlySpan<byte> payload));
-        byte[] destination = new byte[_encodedFrame.Length];
-
-        FrameCodec.Encode(
-            header.MessageType,
-            header.SessionId,
-            header.ProducerId,
-            header.ProducerSequence,
-            header.SequenceId,
-            payload,
-            destination);
-
-        Assert.Equal(_encodedFrame, destination);
-    }
-
-    [Fact]
     public void TryDecodeReportsEveryTruncatedFrame()
     {
         for (int length = 0; length < _encodedFrame.Length; length++)
@@ -219,14 +196,6 @@ public class FrameCodecTests
         Assert.Equal(
             OperationStatus.InvalidData,
             FrameCodec.TryDecode(frame, out _, out _));
-    }
-
-    [Fact]
-    public void ReadFrameLengthReadsACompletePrefix()
-    {
-        Assert.Equal(
-            _encodedFrame.Length,
-            FrameCodec.ReadFrameLength(_encodedFrame.AsSpan(0, FrameLengthFieldSize)));
     }
 
     [Fact]

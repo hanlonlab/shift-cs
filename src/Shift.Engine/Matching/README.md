@@ -1,66 +1,47 @@
 # Matching
 
-Owns deterministic order matching and book state. Participant orders live in LocalOrderBook, while replayed market observations update ReferenceBook without becoming synthetic participant orders.
+Owns order matching and book state. Participant orders live in LocalOrderBook. Recorded market quotes belong in ReferenceBook, with simulated consumption tracked separately so participant activity does not change historical data.
 
-`LocalOrderBook` holds the residual limit orders for one instrument in price-time priority. The deterministic Engine is its single writer; matching and trade generation remain outside the book.
+LocalOrderBook currently stores remaining limit orders for one instrument, using best price first and FIFO within each price. Matching and trade generation remain outside the book.
 
-`MatchingEngine` currently owns one `LocalOrderBook` and accepts `StartNewSession` through `StartSession`. The first command activates the session; another start returns `AlreadyStarted` without changing state. Matching, session end, and matching-result production are not implemented yet.
+MatchingEngine handles one instrument (`PairId`) and one session. It supports Day and IOC limit orders, lookup, cancellation, quantity reduction, immediate executions against recorded quotes, and maker fills from directed reference trades. Engine tests exercise these behaviors, and the [recorded replay sample](../../../docs/recorded-replay-sample.md) runs a complete day twice with identical outcomes.
 
-## Pro-rata specification
+## Supported behavior
 
-Pro-rata allocation works one price level at a time after all better prices have been consumed.
+- Ordinary limit orders that keep their unfilled quantity in the book until filled, canceled, or session end.
+- Limit orders that execute immediately and cancel any remainder.
+- Cancellation and quantity reduction.
+- Best price first, then oldest order first at the same price.
+- One simulated participant whose orders cannot trade with each other.
 
-For each selected price:
+Hidden orders, post-only behavior, and proportional allocation are outside this first version. Keep the existing FIFO structure. See the [simplified matching-engine plan](../../../docs/matching-engine-plan.md) for the data prerequisites and fill assumptions, and its [delivery slices](../../../docs/matching-engine-plan.md#delivery-slices) for ownership boundaries and completion criteria. The sequence is order lifecycle, execution against a quote, waiting-order fills, then a repeatable recorded session.
 
-1. Put executable interest in deterministic queue order.
-2. Apply self-trade prevention and keep only the executable prefix.
-3. Combine eligible anonymous reference slices into one candidate.
-4. Snapshot each local order's remaining quantity and the anonymous candidate's executable shadow quantity once.
-5. Set the allocatable quantity to the smaller of the incoming remainder and the total snapshotted weight.
-6. Give each candidate `floor(allocatable quantity * weight / total weight)` using exact integer arithmetic.
-7. Give the remaining rounding units, one per candidate, in queue order. Earlier priority wins; stable interest identity breaks an exact tie. The anonymous aggregate takes the queue position and stable identity of its oldest eligible slice.
-8. Apply the complete allocation without recalculating weights between fills.
+## Library API
 
-There is no guaranteed minimum allocation. A candidate whose proportional share is below one unit receives nothing unless it receives a rounding unit. Raw observed reference quantity is never a weight; previously consumed shadow quantity cannot be allocated again. Anonymous slices are combined so their internal fragmentation cannot create extra rounding opportunities. An allocation to the aggregate consumes its eligible slices oldest first, and the next input takes the aggregate's rank from the oldest surviving slice.
+Construct `new MatchingEngine(pairId)` with a positive instrument ID, then call `StartSession(new StartNewSession())`. Repeated start preserves active state. An ended engine cannot restart; construct a fresh engine for the next session.
 
-### Weighting, rounding, and rounding residual
+| Method | Result |
+| --- | --- |
+| `Place(command, fills)` | `OrderResult`: remaining/canceled quantities, reasons, and fill count. Day residuals rest; IOC residuals cancel. At most one taker fill is produced at the current external price. |
+| `TryGetOrder(orderId, out order)` | An immutable snapshot of the live order. |
+| `Cancel(command)` / `Reduce(pairId, orderId, quantity)` | Requested cancellation amounts. Partial reduction preserves FIFO. |
+| `UpdateReferenceQuote(pairId, bid, ask)` | Typed validation outcome. A default level means an absent side; a present level needs positive price and quantity. Quotes alone never fill resting orders. |
+| `GetReferenceLevel(side)` | Raw observed quantity and remaining simulated quantity, separately. |
+| `RecordReferenceTrade(pairId, aggressorSide, price, quantity, fills)` | Maker fill count and unallocated trade quantity. The reader supplies directed, eligible trade demand. |
+| `EndSession(command, canceledOrders, out count)` | Cancels highest bids first, then lowest asks, preserving FIFO, and clears all state. Each cancellation has the implied `EndOfDay` reason. |
 
-At 100 ticks, suppose an external aggressor encounters local orders of 50 and 30 units, followed by 20 units of executable anonymous reference liquidity. For an allocatable quantity of 17:
+The caller owns and reuses output spans. Only the reported prefix is valid. Insufficient capacity rejects before any state/output mutation. Invalid requests return existing typed rejection reasons; `OrderResult` quantities describe successful instructions only. `PostOnlyLimit` and unknown types return `UnsupportedOrderType`. Wrong-instrument requests return `InvalidPairId`.
 
-| Candidate | Weight | Exact share | Base allocation |
-|---|---:|---:|---:|
-| Local order 1 | 50 | 8.5 | 8 |
-| Local order 2 | 30 | 5.1 | 5 |
-| Anonymous reference | 20 | 3.4 | 3 |
+All methods require a single writer and ordered, deduplicated input. Live order IDs are unique; completed IDs may be reused with new priority. The caller must prevent delayed instructions from targeting a reused ID. Session-related rejection names retain the existing protocol's `DayNotStarted` terminology.
 
-The base allocations total 16. The one rounding unit goes to local order 1 because it has earlier queue priority, producing final allocations of 9, 5, and 3.
+ReferenceBook stores only accepted recorded levels; ReferenceLiquidity owns separate external quantity and queue positions. LiquidityView selects price/FIFO priority across them without combining their state. New external quantity joins behind existing local orders. Self-match prevention cancels the incoming remainder when its traversal reaches our order, preserving any earlier external fills.
 
-With weights of 1 and 99 and an allocatable quantity of 1, both base allocations are zero. The single rounding unit goes to the earlier candidate. No separate minimum-allocation rule is applied.
-
-For an external reference aggressor and an interleaved queue of anonymous 1, local A 1, anonymous 1, and local B 1, the anonymous slices become one weight-2 candidate at the first slice's position. An allocatable quantity of 2 gives base allocations of 1 anonymous, 0 to A, and 0 to B. The one rounding unit also goes to the anonymous aggregate because its oldest slice is first, producing 2, 0, and 0. Combining the slices gives anonymous liquidity only one residual position rather than one position per internal slice.
-
-If the incoming remainder exceeds total weight, every candidate is filled and the unmatched quantity continues to the next price. After the last compatible price, a Day residual rests, an IOC residual cancels, and a reference-trade residual is returned as unallocated observed quantity.
-
-### Snapshot timing
-
-The weight snapshot is taken once for each price reached by one command or reference trade. A later input takes a new snapshot from the resulting state.
-
-For example, an aggressor with quantity 25 first consumes 5 anonymous units at 99 ticks. At 100 ticks it then encounters a 60-unit local order and 40 anonymous units. The new allocatable quantity is 20, so the level allocates 12 local and 8 anonymous. Using the original quantity of 25 again would invent volume; recalculating after each fill would make the result depend on iteration order.
-
-Input sequence determines the snapshot. If an atomic quote update changes the anonymous quantity at 100 from 40 to 60 before a quantity-20 trade, the weights are 60 and 60 and the allocation is 10 and 10. If the quote update follows the trade, the weights remain 60 and 40 and the allocation is 12 and 8.
-
-### Self-trade prevention
-
-The v1 action is cancel incoming. At the first self-owned resting order in deterministic queue order, that order becomes a stop boundary. Earlier anonymous interest may execute; the self-owned order and everything after it are excluded from the pro-rata snapshot. The incoming remainder is then canceled for self-trade prevention, and the resting order is unchanged. External reference trades have no simulated-participant owner and do not trigger STP.
-
-For example, the queue at 100 ticks contains 20 anonymous units, a 30-unit self-owned order, then 50 newer anonymous units. An incoming local order for 40 executes 20 against the first anonymous interest and cancels its remaining 20. It does not execute against the self-owned order or the later anonymous interest. If the self-owned order is first, all 40 incoming units are canceled.
-
-These choices define engine behavior only. Command validation and future allocation results belong in `Shift.Engine`; mapping accepted results to `OrderUpdated` or `TradeExecuted` remains deferred.
+Historical queue position is estimated. Disappearing/returning prices reset external capacity and queue position; unseen depth is not modeled. Source conversion, venue selection and trade-direction assumptions are documented with the sample. Live sequencer publication remains future work.
 
 ## Belongs here
 
 - Orders, price levels, matching rules, and executions.
-- LocalOrderBook and ReferenceBook behavior.
+- Participant book state and recorded-market fill modeling.
 
 ## Does not belong here
 

@@ -10,6 +10,7 @@
   <Folder Name="/benchmarks/">
     <File Path="benchmarks/README.md" />
     <Project Path="benchmarks/Shift.Benchmarks/Shift.Benchmarks.csproj" />
+    <Project Path="benchmarks/Shift.ReplayBenchmarks/Shift.ReplayBenchmarks.csproj" />
   </Folder>
   <Folder Name="/database/">
     <File Path="database/README.md" />
@@ -44,6 +45,7 @@
   <Folder Name="/tools/">
     <File Path="tools/README.md" />
     <Project Path="tools/Shift.LoadGenerator/Shift.LoadGenerator.csproj" />
+    <Project Path="tools/Shift.ReferenceReplay/Shift.ReferenceReplay.csproj" />
     <Project Path="tools/Shift.SessionLogTool/Shift.SessionLogTool.csproj" />
   </Folder>
 </Solution>

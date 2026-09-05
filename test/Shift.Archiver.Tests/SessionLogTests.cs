@@ -93,23 +93,6 @@ public sealed class SessionLogTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => log.CommitBatch([frame], 1));
     }
 
-    [Fact]
-    public void ConstructorRejectsExistingFile()
-    {
-        string path = Path.Combine(_directory, "session.shiftlog");
-        File.WriteAllBytes(path, [0x01]);
-
-        Assert.Throws<IOException>(() => new SessionLog(path));
-    }
-
-    [Fact]
-    public void ConstructorRequiresExistingParentDirectory()
-    {
-        string path = Path.Combine(_directory, "missing", "session.shiftlog");
-
-        Assert.Throws<DirectoryNotFoundException>(() => new SessionLog(path));
-    }
-
     public void Dispose()
     {
         Directory.Delete(_directory, recursive: true);

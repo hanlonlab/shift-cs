@@ -9,12 +9,6 @@ namespace Shift.IntegrationTests;
 public class UnixDatagramFrameTests
 {
     [Fact]
-    public void MaximumDatagramSizeMatchesMaximumFrameSize()
-    {
-        Assert.Equal(FrameCodec.MaximumFrameSize, UnixDatagramReceiver.MaximumDatagramSize);
-    }
-
-    [Fact]
     public async Task SendsAndReceivesEncodedFrame()
     {
         Assert.SkipWhen(

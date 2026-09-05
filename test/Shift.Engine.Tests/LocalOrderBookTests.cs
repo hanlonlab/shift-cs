@@ -7,12 +7,26 @@ namespace Shift.Engine.Tests;
 public sealed class LocalOrderBookTests
 {
     [Fact]
-    public void EmptyBookHasNoBestOrders()
+    public void LookupReturnsASnapshotAndReflectsLaterChanges()
     {
         LocalOrderBook book = new();
+        book.TryAdd(1, OrderSide.Buy, 100, 10);
+        book.TryAdd(2, OrderSide.Sell, 101, 20);
 
-        Assert.False(book.TryGetBest(OrderSide.Buy, out _));
-        Assert.False(book.TryGetBest(OrderSide.Sell, out _));
+        Assert.True(book.TryGet(1, out RestingOrder bid));
+        Assert.True(book.TryGet(2, out RestingOrder ask));
+        Assert.Equal(new RestingOrder(1, OrderSide.Buy, 100, 10), bid);
+        Assert.Equal(new RestingOrder(2, OrderSide.Sell, 101, 20), ask);
+
+        book.Reduce(1, 4);
+        book.TryCancel(2, out _);
+
+        Assert.Equal(10, bid.RemainingQuantity);
+        Assert.True(book.TryGet(1, out RestingOrder reduced));
+        Assert.Equal(6, reduced.RemainingQuantity);
+        Assert.False(book.TryGet(2, out RestingOrder canceled));
+        Assert.Equal(default, canceled);
+        Assert.False(book.TryGet(3, out _));
     }
 
     [Fact]

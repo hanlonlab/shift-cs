@@ -55,7 +55,8 @@ public enum RejectionReason : byte
     UnknownOrder = 12,
     ReductionExceedsRemainingQuantity = 13,
     LockedOrCrossedReferenceQuote = 14,
-    AmbiguousReferenceTrade = 15
+    AmbiguousReferenceTrade = 15,
+    InvalidPairId = 16
 }
 
 public enum CancellationReason : byte

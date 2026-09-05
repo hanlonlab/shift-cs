@@ -15,6 +15,28 @@ public class LocalOrderBook
 
     public int Count => _orders.Count;
 
+    internal IEnumerable<RestingOrder> GetOrders(OrderSide side)
+    {
+        foreach (PriceLevel level in GetLevels(side).Values)
+        {
+            for (OrderNode? order = level.Head; order is not null; order = order.Next)
+            {
+                yield return order.ToRestingOrder();
+            }
+        }
+    }
+
+    internal IEnumerable<RestingOrder> GetOrdersAtPrice(OrderSide side, long priceTicks)
+    {
+        if (GetLevels(side).TryGetValue(priceTicks, out PriceLevel? level))
+        {
+            for (OrderNode? order = level.Head; order is not null; order = order.Next)
+            {
+                yield return order.ToRestingOrder();
+            }
+        }
+    }
+
     public bool TryAdd(long orderId, OrderSide side, long priceTicks, long quantity)
     {
         SortedDictionary<long, PriceLevel> levels = GetLevels(side);
@@ -48,6 +70,18 @@ public class LocalOrderBook
 
         level.Tail = order;
         _orders.Add(orderId, order);
+        return true;
+    }
+
+    public bool TryGet(long orderId, out RestingOrder order)
+    {
+        if (!_orders.TryGetValue(orderId, out OrderNode? node))
+        {
+            order = default;
+            return false;
+        }
+
+        order = node.ToRestingOrder();
         return true;
     }
 
