@@ -10,12 +10,7 @@ public static class TradeExecutedCodec
 
     public static int Encode(TradeExecuted message, Span<byte> destination)
     {
-        Fill fill = message.Fill;
-        if (message.PairId <= 0
-            || fill.ParticipantOrderId <= 0
-            || fill.PriceTicks <= 0
-            || fill.Quantity <= 0
-            || !Enum.IsDefined(fill.Role))
+        if (!IsValid(message))
         {
             throw new ArgumentOutOfRangeException(nameof(message));
         }
@@ -25,6 +20,7 @@ public static class TradeExecutedCodec
             throw new ArgumentException("Destination is too small for the encoded event.", nameof(destination));
         }
 
+        Fill fill = message.Fill;
         BinaryPrimitives.WriteInt64BigEndian(destination, message.PairId);
         BinaryPrimitives.WriteInt64BigEndian(destination[8..], fill.ParticipantOrderId);
         BinaryPrimitives.WriteInt64BigEndian(destination[16..], fill.PriceTicks);
@@ -46,19 +42,26 @@ public static class TradeExecutedCodec
         long priceTicks = BinaryPrimitives.ReadInt64BigEndian(source[16..]);
         long quantity = BinaryPrimitives.ReadInt64BigEndian(source[24..]);
         var role = (FillRole)source[32];
-        if (pairId <= 0
-            || participantOrderId <= 0
-            || priceTicks <= 0
-            || quantity <= 0
-            || !Enum.IsDefined(role))
+        var decoded = new TradeExecuted(
+            pairId,
+            new Fill(participantOrderId, priceTicks, quantity, role));
+        if (!IsValid(decoded))
         {
             message = default;
             return false;
         }
 
-        message = new TradeExecuted(
-            pairId,
-            new Fill(participantOrderId, priceTicks, quantity, role));
+        message = decoded;
         return true;
+    }
+
+    private static bool IsValid(TradeExecuted message)
+    {
+        Fill fill = message.Fill;
+        return message.PairId > 0
+            && fill.ParticipantOrderId > 0
+            && fill.PriceTicks > 0
+            && fill.Quantity > 0
+            && Enum.IsDefined(fill.Role);
     }
 }

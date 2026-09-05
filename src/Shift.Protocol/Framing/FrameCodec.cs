@@ -237,19 +237,27 @@ public static class FrameCodec
     public static CanonicalFrame DecodeSequencedCandidate(ReadOnlyMemory<byte> source)
     {
         CanonicalFrame frame = Decode(source);
+        ValidateSequencedCandidate(frame);
+        return frame;
+    }
+
+    /// <summary>Validates the sequenced-candidate role of an already canonical frame.</summary>
+    public static void ValidateSequencedCandidate(CanonicalFrame frame)
+    {
         FrameHeader header = frame.Header;
-        if (header.MessageType == MessageType.CommitThrough
+        if (frame.Bytes.IsEmpty
+            || header.MessageType == MessageType.CommitThrough
             || header.ProducerId == ControlProducerId
             || header.ProducerSequence == 0
             || header.SequenceId <= 0)
         {
             throw new InvalidDataException("Frame is not a valid sequenced candidate.");
         }
-
-        return frame;
     }
 
-    internal static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
+    /// <summary>Decodes one complete canonical frame without imposing a submission or control role.</summary>
+    /// <remarks>The returned bytes and payload reference the source buffer.</remarks>
+    public static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
     {
         OperationStatus status = TryDecode(source.Span, out FrameHeader header, out _);
         if (status != OperationStatus.Done)

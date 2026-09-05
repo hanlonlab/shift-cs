@@ -13,6 +13,19 @@ This repository contains a single-host replay trading platform built around one 
 
 Business state belongs in the deterministic engine, ordering belongs in the sequencer, durable records belong in the archiver, and query state belongs in PostgreSQL projections.
 
+## Matching communication smoke scenario
+
+```shell
+dotnet run --project tools/Shift.LoadGenerator --configuration Release
+```
+
+Runs one session, one reference quote, and one participant IOC through the real
+Sequencer/Archiver and Engine host over local sockets. It observes the committed
+order update and execution before ending the session, then prints the six
+committed frames and the retained archive path. See
+[the scenario](tools/Shift.LoadGenerator/README.md) and
+[Engine host](src/Shift.Engine/EngineHost/README.md) for the supported scope.
+
 ## Code style
 
 Repository-wide formatting, naming, and analyzer rules live in `.editorconfig` and `Directory.Build.props`. Compiler and analyzer warnings fail the build, nullable reference types are enabled, and integral arithmetic is checked by default. Use the smallest possible `unchecked` block only when wraparound is intentional, such as in a checksum.

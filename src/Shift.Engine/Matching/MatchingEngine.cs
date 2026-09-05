@@ -136,11 +136,7 @@ public sealed class MatchingEngine
             return new OrderResult(RejectionReason.ReductionExceedsRemainingQuantity);
         }
 
-        long remainingQuantity = _localOrderBook.Reduce(orderId, reductionQuantity);
-        if (remainingQuantity == 0)
-        {
-            _liquidity.GetReference(order.Side).RemoveOrder(orderId);
-        }
+        long remainingQuantity = ReduceRestingOrder(orderId, order.Side, reductionQuantity);
 
         return new OrderResult(
             RejectionReason.None,
@@ -233,12 +229,7 @@ public sealed class MatchingEngine
             }
             else
             {
-                long remaining = _localOrderBook.Reduce(resting.OrderId, executed);
-                if (remaining == 0)
-                {
-                    _liquidity.GetReference(restingSide).RemoveOrder(resting.OrderId);
-                }
-
+                ReduceRestingOrder(resting.OrderId, restingSide, executed);
                 fills[fillCount++] = new Fill(resting.OrderId, resting.PriceTicks, executed, FillRole.Maker);
             }
 
@@ -348,6 +339,17 @@ public sealed class MatchingEngine
     }
 
     private static OrderSide Opposite(OrderSide side) => side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy;
+
+    private long ReduceRestingOrder(long orderId, OrderSide side, long quantity)
+    {
+        long remainingQuantity = _localOrderBook.Reduce(orderId, quantity);
+        if (remainingQuantity == 0)
+        {
+            _liquidity.GetReference(side).RemoveOrder(orderId);
+        }
+
+        return remainingQuantity;
+    }
 
     private int CancelSide(OrderSide side, Span<CanceledOrder> canceledOrders)
     {

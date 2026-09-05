@@ -25,7 +25,7 @@ dotnet benchmarks/Shift.ReplayBenchmarks/bin/Release/net10.0/Shift.ReplayBenchma
 ## Workloads and boundaries
 
 - **TAQ parse:** both text files, including allocation and validation, with a warm filesystem cache. No download or decompression.
-- **Sample replay:** the actual `SampleReplay.Run` source, linked into this assembly. Includes stream merge, filters, session creation/cleanup, the existing order schedule, matching, output hashing, and quantity-conservation checks. Parsing is excluded. Every iteration must equal the initial complete report.
+- **Sample replay:** the public `SampleReplay.Run` entry point from the referenced `Shift.ReferenceReplay` project. Includes stream merge, filters, session creation/cleanup, the existing order schedule, matching, output hashing, and quantity-conservation checks. Parsing is excluded. Every iteration must equal the initial complete report.
 - **Parse plus replay:** both operations above, once each. The regular CLI does two replays and also incurs process startup; this measurement does neither.
 - **Common tape:** 21,054 eligible regular-session NBBO updates and 6,936 ordinary, direction-inferred trades from all venues. A shared C# normalizer retains integer millionths of dollars/shares, excludes tied or unclassifiable trades, and preserves input ordering. This is an artificial consolidated venue for measuring data processing. It is not the NYSE-only execution policy in the sample runner. No participant orders, strategy, latency, fees, output hashing, or reporting are enabled.
 - **Repeated tape:** the common tape repeated twenty times with successive timestamps, in one session. This is 559,800 logical events, not twenty independent observed market days.

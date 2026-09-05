@@ -17,11 +17,6 @@ public readonly record struct ReferenceLevel(
     long PriceTicks,
     long Quantity);
 
-public readonly record struct ReferenceLevelState(
-    long PriceTicks,
-    long RawObservedQuantity,
-    long ExecutableShadowQuantity);
-
 public readonly record struct Fill(
     long ParticipantOrderId,
     long PriceTicks,
@@ -33,10 +28,6 @@ public enum FillRole : byte
     Maker = 1,
     Taker = 2
 }
-
-public readonly record struct CanceledOrder(
-    long OrderId,
-    long CanceledQuantity);
 
 public enum RejectionReason : byte
 {

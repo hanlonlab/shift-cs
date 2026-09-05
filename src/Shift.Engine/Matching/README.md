@@ -36,7 +36,7 @@ All methods require a single writer and ordered, deduplicated input. Live order 
 
 ReferenceBook stores only accepted recorded levels; ReferenceLiquidity owns separate external quantity and queue positions. LiquidityView selects price/FIFO priority across them without combining their state. New external quantity joins behind existing local orders. Self-match prevention cancels the incoming remainder when its traversal reaches our order, preserving any earlier external fills.
 
-Historical queue position is estimated. Disappearing/returning prices reset external capacity and queue position; unseen depth is not modeled. Source conversion, venue selection and trade-direction assumptions are documented with the sample. Live sequencer publication remains future work.
+Historical queue position is estimated. Disappearing/returning prices reset external capacity and queue position; unseen depth is not modeled. Source conversion, venue selection and trade-direction assumptions are documented with the sample. [EngineHost](../EngineHost/README.md) connects the live quote/IOC subset to the sequencer for one instrument and one simulated participant; the library supports the broader behavior described above.
 
 ## Belongs here
 

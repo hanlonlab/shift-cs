@@ -6,6 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Shift.Engine/Shift.Engine.csproj" />
     <ProjectReference Include="../../src/Shift.ReferenceFeed/Shift.ReferenceFeed.csproj" />
-    <Compile Include="../../tools/Shift.ReferenceReplay/SampleReplay.cs" Link="SampleReplay.cs" />
+    <ProjectReference Include="../../tools/Shift.ReferenceReplay/Shift.ReferenceReplay.csproj" />
   </ItemGroup>
 </Project>

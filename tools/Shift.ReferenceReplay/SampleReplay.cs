@@ -8,7 +8,7 @@ using Shift.ReferenceFeed.Taq;
 namespace Shift.ReferenceReplay;
 
 /// <summary>A deterministic exercise of the engine, not a trading strategy or profitability test.</summary>
-internal sealed class SampleReplay : IDisposable
+public sealed class SampleReplay : IDisposable
 {
     private const long PairId = 1;
     private const long OpenTime = 93_000_000_000_000;
@@ -30,7 +30,11 @@ internal sealed class SampleReplay : IDisposable
     private int _makerFills;
     private int _takerFills;
 
-    internal static ReplayReport Run(Quote[] quotes, RecordedTrade[] trades)
+    private SampleReplay()
+    {
+    }
+
+    public static ReplayReport Run(Quote[] quotes, RecordedTrade[] trades)
     {
         using SampleReplay replay = new();
         replay._engine.StartSession(new StartNewSession());
@@ -193,9 +197,3 @@ internal sealed class SampleReplay : IDisposable
 
     public void Dispose() => _digest.Dispose();
 }
-
-internal sealed record ReplayReport(
-    int QuoteEvents, int TradeEvents, int EligibleTrades, int AmbiguousTrades,
-    int ExcludedTrades, long SubmittedOrders, decimal SubmittedShares, decimal FilledShares,
-    decimal CanceledShares, int MakerFills, int TakerFills, decimal UnallocatedTradeShares,
-    string OutcomeSha256);

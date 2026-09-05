@@ -16,12 +16,7 @@ public static class OrderUpdatedCodec
 
     public static int Encode(OrderUpdated message, Span<byte> destination)
     {
-        if (message.PairId <= 0
-            || message.OrderId <= 0
-            || message.RemainingQuantity < 0
-            || message.CanceledQuantity < 0
-            || !Enum.IsDefined(message.RejectionReason)
-            || !Enum.IsDefined(message.CancellationReason))
+        if (!IsValid(message))
         {
             throw new ArgumentOutOfRangeException(nameof(message));
         }
@@ -54,24 +49,30 @@ public static class OrderUpdatedCodec
         long canceledQuantity = BinaryPrimitives.ReadInt64BigEndian(source[24..]);
         var rejectionReason = (RejectionReason)source[32];
         var cancellationReason = (CancellationReason)source[33];
-        if (pairId <= 0
-            || orderId <= 0
-            || remainingQuantity < 0
-            || canceledQuantity < 0
-            || !Enum.IsDefined(rejectionReason)
-            || !Enum.IsDefined(cancellationReason))
-        {
-            message = default;
-            return false;
-        }
-
-        message = new OrderUpdated(
+        var decoded = new OrderUpdated(
             pairId,
             orderId,
             remainingQuantity,
             canceledQuantity,
             rejectionReason,
             cancellationReason);
+        if (!IsValid(decoded))
+        {
+            message = default;
+            return false;
+        }
+
+        message = decoded;
         return true;
+    }
+
+    private static bool IsValid(OrderUpdated message)
+    {
+        return message.PairId > 0
+            && message.OrderId > 0
+            && message.RemainingQuantity >= 0
+            && message.CanceledQuantity >= 0
+            && Enum.IsDefined(message.RejectionReason)
+            && Enum.IsDefined(message.CancellationReason);
     }
 }

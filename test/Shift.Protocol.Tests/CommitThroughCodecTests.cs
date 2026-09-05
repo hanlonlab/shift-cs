@@ -21,4 +21,26 @@ public class CommitThroughCodecTests
         Assert.Equal(3, frame.Header.SequenceId);
         Assert.True(frame.Payload.IsEmpty);
     }
+
+    [Fact]
+    public void ValidationRejectsEveryIncorrectRoleField()
+    {
+        CanonicalFrame[] invalidFrames =
+        [
+            FrameCodec.Encode(MessageType.PlaceOrder, _sessionId, 0, 0, 1, []),
+            FrameCodec.Encode(MessageType.CommitThrough, _sessionId, 1, 0, 1, []),
+            FrameCodec.Encode(MessageType.CommitThrough, _sessionId, 0, 1, 1, []),
+            FrameCodec.Encode(MessageType.CommitThrough, _sessionId, 0, 0, 0, []),
+            FrameCodec.Encode(MessageType.CommitThrough, _sessionId, 0, 0, -1, []),
+            FrameCodec.Encode(MessageType.CommitThrough, _sessionId, 0, 0, 1, [1]),
+        ];
+
+        foreach (CanonicalFrame frame in invalidFrames)
+        {
+            Assert.Throws<InvalidDataException>(() => CommitThroughCodec.Validate(frame));
+            Assert.Throws<InvalidDataException>(() => CommitThroughCodec.Decode(frame.Bytes));
+        }
+
+        Assert.Throws<InvalidDataException>(() => CommitThroughCodec.Validate(default));
+    }
 }

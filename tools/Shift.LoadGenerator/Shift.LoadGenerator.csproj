@@ -3,5 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Shift.Engine/Shift.Engine.csproj" />
+    <ProjectReference Include="../../src/Shift.Sequencer/Shift.Sequencer.csproj" />
+  </ItemGroup>
 </Project>

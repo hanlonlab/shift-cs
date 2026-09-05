@@ -23,8 +23,16 @@ public static class CommitThroughCodec
     public static CanonicalFrame Decode(ReadOnlyMemory<byte> source)
     {
         CanonicalFrame frame = FrameCodec.Decode(source);
+        Validate(frame);
+        return frame;
+    }
+
+    /// <summary>Validates the commit-through role of an already canonical frame.</summary>
+    public static void Validate(CanonicalFrame frame)
+    {
         FrameHeader header = frame.Header;
-        if (header.MessageType != MessageType.CommitThrough
+        if (frame.Bytes.IsEmpty
+            || header.MessageType != MessageType.CommitThrough
             || header.ProducerId != FrameCodec.ControlProducerId
             || header.ProducerSequence != 0
             || header.SequenceId <= 0
@@ -32,7 +40,5 @@ public static class CommitThroughCodec
         {
             throw new InvalidDataException("Frame is not a valid commit-through acknowledgement.");
         }
-
-        return frame;
     }
 }

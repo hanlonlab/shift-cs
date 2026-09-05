@@ -27,6 +27,28 @@ public class FrameRoleCodecTests
         }
     }
 
+    [Fact]
+    public void SequencedCandidateValidationRejectsEveryIncorrectRoleField()
+    {
+        byte[][] invalidFrames =
+        [
+            Encode(MessageType.CommitThrough, ProducerId, ProducerSequence, 1, []),
+            Encode(MessageType.PlaceOrder, FrameCodec.ControlProducerId, ProducerSequence, 1, []),
+            Encode(MessageType.PlaceOrder, ProducerId, 0, 1, []),
+            Encode(MessageType.PlaceOrder, ProducerId, ProducerSequence, 0, []),
+            Encode(MessageType.PlaceOrder, ProducerId, ProducerSequence, -1, []),
+        ];
+
+        foreach (byte[] bytes in invalidFrames)
+        {
+            CanonicalFrame frame = FrameCodec.Decode(bytes);
+            Assert.Throws<InvalidDataException>(() => FrameCodec.ValidateSequencedCandidate(frame));
+            Assert.Throws<InvalidDataException>(() => FrameCodec.DecodeSequencedCandidate(bytes));
+        }
+
+        Assert.Throws<InvalidDataException>(() => FrameCodec.ValidateSequencedCandidate(default));
+    }
+
     private static byte[] Encode(
         MessageType messageType,
         ushort producerId,

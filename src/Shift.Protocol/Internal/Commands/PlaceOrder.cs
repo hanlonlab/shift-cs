@@ -16,12 +16,7 @@ public static class PlaceOrderCodec
 
     public static int Encode(PlaceOrder command, Span<byte> destination)
     {
-        if (command.PairId <= 0
-            || command.OrderId <= 0
-            || !Enum.IsDefined(command.Side)
-            || command.PriceTicks <= 0
-            || command.Quantity <= 0
-            || !Enum.IsDefined(command.OrderType))
+        if (!IsValid(command))
         {
             throw new ArgumentOutOfRangeException(nameof(command));
         }
@@ -54,18 +49,24 @@ public static class PlaceOrderCodec
         long priceTicks = BinaryPrimitives.ReadInt64BigEndian(source[17..]);
         long quantity = BinaryPrimitives.ReadInt64BigEndian(source[25..]);
         var orderType = (OrderType)source[33];
-        if (pairId <= 0
-            || orderId <= 0
-            || !Enum.IsDefined(side)
-            || priceTicks <= 0
-            || quantity <= 0
-            || !Enum.IsDefined(orderType))
+        var decoded = new PlaceOrder(pairId, orderId, side, priceTicks, quantity, orderType);
+        if (!IsValid(decoded))
         {
             command = default;
             return false;
         }
 
-        command = new PlaceOrder(pairId, orderId, side, priceTicks, quantity, orderType);
+        command = decoded;
         return true;
+    }
+
+    private static bool IsValid(PlaceOrder command)
+    {
+        return command.PairId > 0
+            && command.OrderId > 0
+            && Enum.IsDefined(command.Side)
+            && command.PriceTicks > 0
+            && command.Quantity > 0
+            && Enum.IsDefined(command.OrderType);
     }
 }
